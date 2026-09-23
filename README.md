@@ -1,5 +1,8 @@
 # Claude Project Migrator
 
+> **Quick start:** Activity Bar → **Claude Migrator** icon → `Export Sessions...` on the old
+> machine, move the `.cmt` file over, then `Claude Migrator: Import Sessions` on the new one.
+
 A VS Code extension that moves two different kinds of Claude data from one machine to another,
 rewriting machine-specific paths along the way -- even when the OS, username, home directory,
 drive letter, or project path is different:
@@ -71,7 +74,8 @@ export/import operation is currently in progress.
 
 **Export**: `Claude Migrator: Export Sessions` (or the sidebar's "Export Sessions..." button)
 scans `~/.claude/projects/`, lets you multi-select which session projects to include, runs the
-same security scan and review steps as project-config export (see below), and writes a `.cmt`.
+same security scan and review steps as project-config export (see below), and writes a `.cmt`
+(default name `claude-sessions-<date>.cmt`).
 
 **Import**: `Claude Migrator: Import Sessions` opens a `.cmt`, verifies it, lets you pick which
 session projects to bring in, auto-matches each one to a destination project folder the same way
@@ -97,6 +101,25 @@ wherever you're importing to.
 If a session project has no recorded `cwd` at all (rare -- e.g. a session that failed before its
 first real turn), its source path is shown as unknown and none of its path references can be
 automatically migrated; the files still export and import correctly, just unmodified.
+
+### Re-importing a session (incremental updates)
+
+If a session `.jsonl` already exists at the destination -- most commonly because you already
+imported this same archive before, or the same session has kept growing on both machines -- pick
+**Merge** at the "already has session data" prompt instead of **Backup and replace**. For `.jsonl`
+files specifically, Merge doesn't overwrite the file: it reads both the local file and the
+incoming one, matches entries by their `uuid` field, and writes the union back out --
+
+- an entry already present locally (by `uuid`) is left as-is and not duplicated, so re-importing
+  the exact same archive twice is a no-op;
+- an entry that's only in the incoming file (new messages exported since you last imported) gets
+  appended;
+- an entry that's only in your local copy (messages added locally since your last export) is kept,
+  not dropped.
+
+When every entry in the merged result has a `timestamp` (the normal case), the file is written
+back out in chronological order. A backup of the pre-merge file is still taken first, same as
+every other destructive change this tool makes.
 
 ## Project config export workflow
 
@@ -145,10 +168,10 @@ automatically migrated; the files still export and import correctly, just unmodi
 
 ## Supported OS
 
-Windows, macOS, and Linux -- as both the export and import side, in any combination. Path parsing
-uses Node's `path.win32` / `path.posix` explicitly rather than assuming the current OS, so e.g. a
-Windows-authored `.claude` file can be correctly parsed and migrated while running the extension
-on Linux.
+Windows, macOS, and Linux -- as both the export and import side, in any combination, for both
+project config and sessions. Path parsing uses Node's `path.win32` / `path.posix` explicitly
+rather than assuming the current OS, so e.g. a Windows-authored `.claude` file or session
+transcript can be correctly parsed and migrated while running the extension on Linux.
 
 ## Archive format (`.cmt`)
 
@@ -191,20 +214,23 @@ source path.
 - Nothing is uploaded anywhere by this extension. Export writes a local `.cmt` file; you decide
   how to transfer it.
 - Checksums are verified before any archive contents are extracted to disk on import, and before
-  any destructive change (backup-and-replace, merge) is applied to an existing `.claude`.
+  any destructive change (backup-and-replace, merge) is applied to existing project config or
+  session data.
 
 ## Path migration behavior
 
-Every absolute path found in a project's `.claude` text files is classified against three roots,
-most specific first: the project root (`$PROJECT_ROOT`), the workspace root (`$WORKSPACE_ROOT`),
-and the home directory (`$HOME`). A path that resolves under one of these is rewritten to the
-destination's equivalent path in the destination's native separator style; a path that doesn't
-match any known root is left completely untouched and reported as an unresolved reference in the
-migration preview and the final report -- the extension never guesses at a replacement.
+Every absolute path found in a project's text files -- `.claude` config or session `.jsonl` alike
+-- is classified against three roots, most specific first: the project root (`$PROJECT_ROOT`), the
+workspace root (`$WORKSPACE_ROOT`), and the home directory (`$HOME`). A path that resolves under
+one of these is rewritten to the destination's equivalent path in the destination's native
+separator style; a path that doesn't match any known root is left completely untouched and
+reported as an unresolved reference in the migration preview and the final report -- the extension
+never guesses at a replacement.
 
-JSON files are only ever rewritten if the result still parses as valid JSON (backslashes in a
-Windows destination path are correctly JSON-escaped); if that check fails for any reason, the file
-is left unmodified as a safety fallback rather than risking a corrupted config.
+JSON files (`.json`, and each line of a `.jsonl`) are only ever rewritten if the result still
+parses as valid JSON (backslashes in a Windows destination path are correctly JSON-escaped); if
+that check fails, the affected unit is left unmodified as a safety fallback rather than risking
+corrupted config or a corrupted session transcript.
 
 Binary files are copied byte-for-byte and are never scanned or modified.
 
@@ -216,6 +242,8 @@ Binary files are copied byte-for-byte and are never scanned or modified.
   "replace" UI is a natural next step but is out of scope for this MVP.
 - JSON merging for the **Merge** import strategy is a one-level-deep structural merge (incoming
   keys win, nested objects merge one level further); it is not a full three-way/semantic merge.
+  `.jsonl` session transcripts merge differently (see "Re-importing a session" below): by entry
+  identity (`uuid`), not by key.
 - Full functionality (scanning, reading, and writing) requires the extension host's filesystem to
   be the one you actually want to operate on. In VS Code Remote (SSH / WSL / Dev Containers), this
   extension runs on the remote/container filesystem, not your local machine -- exporting *from* a
@@ -243,7 +271,7 @@ Press `F5` in VS Code (with this folder open) to launch an Extension Development
 ```bash
 npm run typecheck
 npm run lint
-npm test               # vitest unit tests (117 tests covering path resolution across every
+npm test               # vitest unit tests (123 tests covering path resolution across every
                         # Windows/macOS/Linux source-destination combination, the session
                         # path-encoding algorithm, session discovery via recorded cwd, archive
                         # round-trips and checksum verification for both project config and

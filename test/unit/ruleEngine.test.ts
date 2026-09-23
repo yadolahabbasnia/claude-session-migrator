@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { transformFileContent } from '../../src/migration/ruleEngine';
+import { transformFileContent, mergeJsonlContent } from '../../src/migration/ruleEngine';
 import type { PathContext } from '../../src/migration/pathResolver';
 
 const source: PathContext = {
@@ -115,5 +115,65 @@ describe('transformFileContent on .jsonl (session transcripts)', () => {
     expect(content.slice(unresolvedIndex, unresolvedIndex + '/opt/tool/bin'.length)).toBe(
       '/opt/tool/bin',
     );
+  });
+});
+
+function entry(uuid: string, timestamp: string, extra: Record<string, unknown> = {}): string {
+  return JSON.stringify({ uuid, timestamp, type: 'user', ...extra });
+}
+
+describe('mergeJsonlContent', () => {
+  it('adds incoming entries that are not already present locally', () => {
+    const existing = [entry('a', 't1'), entry('b', 't2')].join('\n') + '\n';
+    const incoming = [entry('b', 't2'), entry('c', 't3')].join('\n') + '\n';
+
+    const result = mergeJsonlContent(existing, incoming);
+    const uuids = result.content
+      .trim()
+      .split('\n')
+      .map((l) => JSON.parse(l).uuid);
+    expect(uuids).toEqual(['a', 'b', 'c']);
+    expect(result.addedCount).toBe(1);
+  });
+
+  it('is a no-op when re-merging the exact same content (idempotent re-import)', () => {
+    const text = [entry('a', 't1'), entry('b', 't2')].join('\n') + '\n';
+    const result = mergeJsonlContent(text, text);
+    expect(result.addedCount).toBe(0);
+    expect(result.content.trim().split('\n')).toHaveLength(2);
+  });
+
+  it('preserves entries that exist locally but are missing from the incoming file', () => {
+    const existing = [entry('a', 't1'), entry('local-only', 't2')].join('\n') + '\n';
+    const incoming = [entry('a', 't1')].join('\n') + '\n';
+
+    const result = mergeJsonlContent(existing, incoming);
+    const uuids = result.content
+      .trim()
+      .split('\n')
+      .map((l) => JSON.parse(l).uuid);
+    expect(uuids).toContain('local-only');
+    expect(result.addedCount).toBe(0);
+  });
+
+  it('orders the merged result chronologically by timestamp when every entry has one', () => {
+    const existing = entry('a', '2026-01-01T00:00:03.000Z') + '\n';
+    const incoming = entry('b', '2026-01-01T00:00:01.000Z') + '\n';
+
+    const result = mergeJsonlContent(existing, incoming);
+    const uuids = result.content
+      .trim()
+      .split('\n')
+      .map((l) => JSON.parse(l).uuid);
+    expect(uuids).toEqual(['b', 'a']);
+  });
+
+  it('falls back to raw-line identity for lines without a uuid', () => {
+    const existing = '{"note":"no uuid here"}\n';
+    const incoming = '{"note":"no uuid here"}\n{"note":"a different line"}\n';
+
+    const result = mergeJsonlContent(existing, incoming);
+    expect(result.addedCount).toBe(1);
+    expect(result.content).toContain('a different line');
   });
 });

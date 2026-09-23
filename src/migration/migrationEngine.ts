@@ -2,7 +2,7 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { walkFiles, looksBinary, ensureDir, pathExists } from '../utils/filesystem';
 import { toPortableRelativePath } from '../utils/paths';
-import { transformFileContent } from './ruleEngine';
+import { transformFileContent, mergeJsonlContent } from './ruleEngine';
 import type { PathContext } from './pathResolver';
 import type { ExistingDataStrategy, ProjectMigrationPreview } from '../models/migration';
 import { logger } from '../utils/logging';
@@ -141,12 +141,29 @@ async function writeTransformed(
   );
 
   let finalText = transformed.content;
-  if (merge?.jsonMerge && path.extname(relativePath).toLowerCase() === '.json' && (await pathExists(destPath))) {
-    finalText = await mergeJsonFile(destPath, finalText);
+  const ext = path.extname(relativePath).toLowerCase();
+  if (merge?.jsonMerge && (await pathExists(destPath))) {
+    if (ext === '.json') {
+      finalText = await mergeJsonFile(destPath, finalText);
+    } else if (ext === '.jsonl') {
+      finalText = await mergeJsonlFile(destPath, finalText);
+    }
   }
 
   await ensureDir(path.dirname(destPath));
   await fs.writeFile(destPath, finalText, 'utf8');
+}
+
+/** Merges an incoming (already path-transformed) .jsonl file into whatever already exists at
+ * `destPath`, so re-importing a session that grew locally in the meantime adds only the new
+ * entries instead of overwriting local-only ones. */
+async function mergeJsonlFile(destPath: string, incomingText: string): Promise<string> {
+  const existingText = await fs.readFile(destPath, 'utf8');
+  const { content, addedCount } = mergeJsonlContent(existingText, incomingText);
+  if (addedCount > 0) {
+    logger.info('Merged session transcript', { destPath, addedEntries: addedCount });
+  }
+  return content;
 }
 
 async function mergeJsonFile(destPath: string, incomingText: string): Promise<string> {

@@ -134,3 +134,80 @@ function transformUnit(
 function escapeForJsonString(value: string): string {
   return value.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
 }
+
+export interface JsonlMergeResult {
+  content: string;
+  /** Entries from `incomingText` that weren't already present in `existingText`. */
+  addedCount: number;
+}
+
+interface JsonlEntry {
+  raw: string;
+  key: string;
+  timestamp?: string;
+}
+
+/**
+ * Merges two `.jsonl` transcripts (e.g. re-importing a session that already exists locally,
+ * possibly because the same session kept growing on both machines) into their union, instead of
+ * one file overwriting the other. Entries are identified by their `uuid` field when present
+ * (falling back to the raw line itself), so re-importing the same archive twice is a no-op, and
+ * entries that exist locally but weren't in the incoming file (e.g. messages added locally since
+ * the last export) are preserved. When every entry has a `timestamp`, the merged result is
+ * ordered chronologically; otherwise existing entries keep their order and new ones are appended.
+ */
+export function mergeJsonlContent(existingText: string, incomingText: string): JsonlMergeResult {
+  const existingEntries = parseJsonlEntries(existingText);
+  const incomingEntries = parseJsonlEntries(incomingText);
+
+  const merged = new Map<string, JsonlEntry>();
+  const order: string[] = [];
+  let addedCount = 0;
+
+  for (const entry of existingEntries) {
+    if (!merged.has(entry.key)) {
+      merged.set(entry.key, entry);
+      order.push(entry.key);
+    }
+  }
+  for (const entry of incomingEntries) {
+    if (!merged.has(entry.key)) {
+      merged.set(entry.key, entry);
+      order.push(entry.key);
+      addedCount += 1;
+    }
+  }
+
+  const entries = order.map((key) => merged.get(key)!);
+  const canSortByTime = entries.length > 0 && entries.every((e) => typeof e.timestamp === 'string');
+  if (canSortByTime) {
+    entries.sort((a, b) => a.timestamp!.localeCompare(b.timestamp!));
+  }
+
+  const content = entries.length > 0 ? entries.map((e) => e.raw).join('\n') + '\n' : '';
+  return { content, addedCount };
+}
+
+function parseJsonlEntries(text: string): JsonlEntry[] {
+  const entries: JsonlEntry[] = [];
+  for (const rawLine of text.split('\n')) {
+    if (!rawLine.trim()) {
+      continue;
+    }
+    let key = rawLine;
+    let timestamp: string | undefined;
+    try {
+      const parsed = JSON.parse(rawLine) as { uuid?: unknown; timestamp?: unknown };
+      if (typeof parsed.uuid === 'string' && parsed.uuid.length > 0) {
+        key = parsed.uuid;
+      }
+      if (typeof parsed.timestamp === 'string') {
+        timestamp = parsed.timestamp;
+      }
+    } catch {
+      // Not parseable JSON -- fall back to using the raw line as its own identity key.
+    }
+    entries.push({ raw: rawLine, key, timestamp });
+  }
+  return entries;
+}

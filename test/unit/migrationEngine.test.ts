@@ -127,6 +127,49 @@ describe('applyMigration', () => {
     expect(incoming).toBe('incoming data');
   });
 
+  it('merge strategy re-importing a session .jsonl adds only new entries, keeping local-only ones', async () => {
+    await fs.mkdir(destClaudeDir, { recursive: true });
+    // The local file has grown since the last export: entry "a" (already imported before) plus
+    // a locally-added entry "local-only" that was never exported.
+    const entryA = JSON.stringify({ uuid: 'a', timestamp: 't1', type: 'user' });
+    const entryLocalOnly = JSON.stringify({ uuid: 'local-only', timestamp: 't2', type: 'user' });
+    const entryB = JSON.stringify({ uuid: 'b', timestamp: 't3', type: 'user' });
+    await fs.writeFile(
+      path.join(destClaudeDir, 'session.jsonl'),
+      [entryA, entryLocalOnly].join('\n') + '\n',
+    );
+    // Re-importing the same archive: it still has "a" (already present) plus new entry "b".
+    await fs.writeFile(path.join(stagedContentDir, 'session.jsonl'), [entryA, entryB].join('\n') + '\n');
+
+    const preview = await buildMigrationPreview({
+      projectId: 'p1',
+      projectName: 'my-api',
+      stagedContentDir,
+      destinationPath,
+      destinationContentDir: path.join(destinationPath, '.claude'),
+      sourceContext: source,
+      destContext: dest,
+    });
+
+    await applyMigration({
+      preview,
+      stagedContentDir,
+      strategy: 'merge',
+      sourceContext: source,
+      destContext: dest,
+    });
+
+    const merged = await fs.readFile(path.join(destClaudeDir, 'session.jsonl'), 'utf8');
+    const uuids = merged
+      .trim()
+      .split('\n')
+      .map((l) => JSON.parse(l).uuid);
+    expect(uuids).toContain('a');
+    expect(uuids).toContain('local-only');
+    expect(uuids).toContain('b');
+    expect(uuids).toHaveLength(3);
+  });
+
   it('skip strategy leaves the destination completely untouched', async () => {
     await fs.mkdir(destClaudeDir, { recursive: true });
     await fs.writeFile(path.join(destClaudeDir, 'old.txt'), 'old data');
