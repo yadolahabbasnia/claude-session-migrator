@@ -1,0 +1,8 @@
+{
+  "workingDirectory": "/Users/alice/dev/project-a",
+  "cacheDir": "/Users/alice/dev/project-a/.cache",
+  "logFile": "/Users/alice/logs/project-a.log",
+  "linterBinary": "/opt/homebrew/bin/linter",
+  "editor": "code",
+  "unrelatedUrl": "https://example.com/docs"
+}

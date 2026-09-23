@@ -1,0 +1,140 @@
+{
+  "name": "claude-project-migrator",
+  "displayName": "Claude Project Migrator",
+  "description": "Export and import Claude project configuration (.claude) between machines, rewriting machine-specific paths automatically.",
+  "version": "0.1.0",
+  "publisher": "claude-project-migrator",
+  "private": true,
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [],
+  "main": "./dist/extension.js",
+  "extensionKind": [
+    "workspace"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "claudeMigrator.export",
+        "title": "Claude Migrator: Export Projects",
+        "category": "Claude Migrator"
+      },
+      {
+        "command": "claudeMigrator.import",
+        "title": "Claude Migrator: Import Backup",
+        "category": "Claude Migrator"
+      },
+      {
+        "command": "claudeMigrator.scan",
+        "title": "Claude Migrator: Scan for Claude Projects",
+        "category": "Claude Migrator"
+      },
+      {
+        "command": "claudeMigrator.inspect",
+        "title": "Claude Migrator: Inspect Backup",
+        "category": "Claude Migrator"
+      },
+      {
+        "command": "claudeMigrator.validate",
+        "title": "Claude Migrator: Validate Current Project",
+        "category": "Claude Migrator"
+      },
+      {
+        "command": "claudeMigrator.exportFolder",
+        "title": "Claude Migrator: Export This Project",
+        "category": "Claude Migrator"
+      },
+      {
+        "command": "claudeMigrator.exportSessions",
+        "title": "Claude Migrator: Export Sessions",
+        "category": "Claude Migrator"
+      },
+      {
+        "command": "claudeMigrator.importSessions",
+        "title": "Claude Migrator: Import Sessions",
+        "category": "Claude Migrator"
+      }
+    ],
+    "menus": {
+      "explorer/context": [
+        {
+          "command": "claudeMigrator.exportFolder",
+          "when": "explorerResourceIsFolder",
+          "group": "7_modification"
+        }
+      ]
+    },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "claudeMigrator",
+          "title": "Claude Migrator",
+          "icon": "resources/activity-icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "claudeMigrator": [
+        {
+          "id": "claudeMigrator.sessionsView",
+          "name": "Claude Code Sessions",
+          "type": "webview"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Claude Migrator",
+      "properties": {
+        "claudeMigrator.scanDirectories": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Additional directories to offer when scanning for Claude projects."
+        },
+        "claudeMigrator.debugLogging": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable verbose debug logging in the Claude Migrator output channel."
+        },
+        "claudeMigrator.scanMaxDepth": {
+          "type": "number",
+          "default": 6,
+          "description": "Maximum directory depth to recurse into when scanning for Claude projects."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./ --noEmit && node esbuild.js",
+    "watch": "node esbuild.js --watch",
+    "typecheck": "tsc -p ./ --noEmit",
+    "lint": "eslint src test --ext .ts",
+    "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "pretest": "npm run compile",
+    "package": "node esbuild.js --production && vsce package --no-dependencies"
+  },
+  "devDependencies": {
+    "@types/adm-zip": "^0.5.5",
+    "@types/node": "^20.14.0",
+    "@types/vscode": "^1.85.0",
+    "@typescript-eslint/eslint-plugin": "^7.16.0",
+    "@typescript-eslint/parser": "^7.16.0",
+    "@vscode/vsce": "^2.32.0",
+    "esbuild": "^0.23.0",
+    "eslint": "^8.57.0",
+    "prettier": "^3.3.3",
+    "typescript": "^5.5.4",
+    "vitest": "^2.0.5"
+  },
+  "dependencies": {
+    "adm-zip": "^0.5.15"
+  }
+}
