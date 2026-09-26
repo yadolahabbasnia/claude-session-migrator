@@ -67,6 +67,11 @@
         "command": "claudeMigrator.deleteSessions",
         "title": "Claude Migrator: Delete Sessions",
         "category": "Claude Migrator"
+      },
+      {
+        "command": "claudeMigrator.syncSessionsViaGit",
+        "title": "Claude Migrator: Sync Sessions via Git",
+        "category": "Claude Migrator"
       }
     ],
     "menus": {
@@ -116,6 +121,26 @@
           "type": "number",
           "default": 6,
           "description": "Maximum directory depth to recurse into when scanning for Claude projects."
+        },
+        "claudeMigrator.gitSync.repoUrl": {
+          "type": "string",
+          "default": "",
+          "description": "Git repository URL used to sync Claude Code sessions between machines (e.g. git@github.com:you/claude-sessions.git). Leave empty to be prompted the first time you run 'Sync Sessions via Git'."
+        },
+        "claudeMigrator.gitSync.localPath": {
+          "type": "string",
+          "default": "",
+          "description": "Local folder checked out from claudeMigrator.gitSync.repoUrl. Must either not exist yet (it will be cloned) or already be a checkout of that exact repository -- sync refuses to run against any other folder. Leave empty to be prompted the first time you run 'Sync Sessions via Git'."
+        },
+        "claudeMigrator.gitSync.branch": {
+          "type": "string",
+          "default": "main",
+          "description": "Branch to pull from and push to in the git-sync repository."
+        },
+        "claudeMigrator.gitSync.archiveFileName": {
+          "type": "string",
+          "default": "claude-sessions.cmt",
+          "description": "Name of the .cmt archive file committed to the git-sync repository."
         }
       }
     }

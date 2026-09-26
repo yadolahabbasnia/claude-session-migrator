@@ -65,6 +65,7 @@ All commands are under the **Claude Migrator** category in the Command Palette:
 | `Claude Migrator: Validate Current Project` | Checks the current workspace folder's `.claude` for structural issues and obvious secrets. |
 | `Claude Migrator: Export This Project` | Right-click a folder in the Explorer to export just that project's `.claude` config. |
 | `Claude Migrator: Delete Sessions` | Deletes session history: pick a project, then either specific sessions or the whole project. |
+| `Claude Migrator: Sync Sessions via Git` | Pushes or pulls session history through a dedicated git repository instead of manually moving `.cmt` files. |
 
 The **Claude Migrator** sidebar (Activity Bar icon) is a live view over your session projects --
 it lists them, lets you export a single project or launch the full export/import wizards, preview
@@ -86,6 +87,26 @@ against your chosen destination folder -- so imported sessions land exactly wher
 itself will look for them, with no extra registration step. Every `.jsonl` line is treated as an
 independent JSON document during migration: a line whose path-replacement would corrupt its JSON
 is reverted on its own, without discarding the rest of that session's successfully migrated lines.
+
+### Syncing sessions via git
+
+As an alternative to manually copying `.cmt` files between machines, `Claude Migrator: Sync
+Sessions via Git` pushes and pulls session history through a git repository you dedicate to this
+purpose:
+
+- **Push** runs the same export wizard as above (project selection, security review), then writes
+  the archive into the repository's working copy, commits, and pushes.
+- **Pull** fetches the latest commit and runs the same import wizard as above against the archive
+  it finds there.
+
+Configure the repository once via `claudeMigrator.gitSync.repoUrl` and
+`claudeMigrator.gitSync.localPath` (or let the command prompt you the first time and save your
+answers). Before every push or pull, the tool re-reads `<localPath>/.git/config` and refuses to
+proceed unless its remote actually matches `repoUrl` -- so a stale or mistyped local path can never
+silently sync sessions into, or read them out of, the wrong repository. `claudeMigrator.gitSync.branch`
+(default `main`) and `claudeMigrator.gitSync.archiveFileName` (default `claude-sessions.cmt`) round
+out the configuration. This requires `git` to be installed and on `PATH`, and (for a private repo)
+whatever credential helper or SSH key you'd normally use for that remote.
 
 ### Deleting sessions
 

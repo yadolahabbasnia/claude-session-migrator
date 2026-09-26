@@ -14,8 +14,13 @@ import { runSecurityReview, pickArchiveDestinationFile, formatBytes } from './ex
 /**
  * @param preselectedProjectId When provided (e.g. from the sidebar's per-item "Export" action),
  * skips the multi-select step and exports just that one session project.
+ * @param preselectedDestinationFile When provided (e.g. from the git-sync wizard), skips the
+ * save-file dialog and writes the archive directly to this path.
  */
-export async function runSessionExportWizard(preselectedProjectId?: string): Promise<void> {
+export async function runSessionExportWizard(
+  preselectedProjectId?: string,
+  preselectedDestinationFile?: string,
+): Promise<boolean> {
   try {
     const sessionsRoot = getSessionsRootDir(getClaudeHomeDir());
 
@@ -30,7 +35,7 @@ export async function runSessionExportWizard(preselectedProjectId?: string): Pro
       vscode.window.showInformationMessage(
         `No Claude Code sessions were found under ${sessionsRoot}.`,
       );
-      return;
+      return false;
     }
 
     let selected: DiscoveredSessionProject[] | undefined;
@@ -38,14 +43,14 @@ export async function runSessionExportWizard(preselectedProjectId?: string): Pro
       const match = projects.find((p) => p.id === preselectedProjectId);
       if (!match) {
         vscode.window.showWarningMessage('That session project could not be found anymore -- try refreshing.');
-        return;
+        return false;
       }
       selected = [match];
     } else {
       selected = await selectSessionProjects(projects);
     }
     if (!selected || selected.length === 0) {
-      return;
+      return false;
     }
 
     const { excludedByTarget, placeholderByTarget, findingsCount } = await runSecurityReview(
@@ -56,12 +61,12 @@ export async function runSessionExportWizard(preselectedProjectId?: string): Pro
 
     const proceed = await showReviewStep(selected, findingsCount, referenceCounts);
     if (!proceed) {
-      return;
+      return false;
     }
 
-    const destination = await pickArchiveDestinationFile('claude-sessions');
+    const destination = preselectedDestinationFile ?? (await pickArchiveDestinationFile('claude-sessions'));
     if (!destination) {
-      return;
+      return false;
     }
 
     await withCancellableProgress('Exporting Claude Code sessions...', async (reporter) => {
@@ -86,20 +91,24 @@ export async function runSessionExportWizard(preselectedProjectId?: string): Pro
       });
     });
 
-    const openFolder = 'Reveal in Explorer';
-    const choice = await vscode.window.showInformationMessage(
-      `Export complete: ${selected.length} session project(s) written to ${path.basename(destination)}.`,
-      openFolder,
-    );
-    if (choice === openFolder) {
-      await vscode.commands.executeCommand('revealFileInOS', vscode.Uri.file(destination));
+    if (!preselectedDestinationFile) {
+      const openFolder = 'Reveal in Explorer';
+      const choice = await vscode.window.showInformationMessage(
+        `Export complete: ${selected.length} session project(s) written to ${path.basename(destination)}.`,
+        openFolder,
+      );
+      if (choice === openFolder) {
+        await vscode.commands.executeCommand('revealFileInOS', vscode.Uri.file(destination));
+      }
     }
+    return true;
   } catch (err) {
     if (err instanceof OperationCancelledError) {
-      return;
+      return false;
     }
     logger.error('Session export failed', { error: String(err) });
     vscode.window.showErrorMessage(`Claude Migrator: session export failed -- ${(err as Error).message}`);
+    return false;
   }
 }
 
