@@ -42,13 +42,13 @@ describe('matchDestination', () => {
     expect(result.matchedBy).toBe('existing-folder-name');
   });
 
-  it('matches the single open workspace folder when nothing else is a candidate', () => {
+  it('does not guess the single open workspace folder when name and git remote both mismatch', () => {
     const project = entry({ name: 'totally-different-name' });
     const result = matchDestination(project, [
       { path: '/home/bob/workdir', name: 'workdir', isCurrentWorkspaceFolder: true },
     ]);
-    expect(result.confidence).toBe('medium');
-    expect(result.matchedBy).toBe('current-workspace');
+    expect(result.confidence).toBe('none');
+    expect(result.destinationPath).toBeUndefined();
   });
 
   it('returns no match when there are multiple ambiguous candidates', () => {

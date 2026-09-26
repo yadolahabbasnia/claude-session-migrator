@@ -21,7 +21,6 @@ export interface DestinationMapping {
   destinationPath?: string;
   /** How the destination was determined. */
   matchedBy?:
-    | 'current-workspace'
     | 'existing-folder-name'
     | 'git-remote'
     | 'project-name'

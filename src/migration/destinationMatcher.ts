@@ -18,11 +18,12 @@ export interface MatchableEntry {
 
 /**
  * Attempts to automatically match an archived project to a destination folder using, in
- * priority order: (1) the currently open workspace when there's an unambiguous single
- * candidate, (2) a matching git remote, (3) an existing folder with the same name, (4) an
+ * priority order: (1) a matching git remote, (2) an existing folder with the same name, (3) an
  * existing folder that already has a `.claude` directory with the same name. Never picks a
  * destination it isn't reasonably confident about -- the caller should prompt the user
- * whenever `confidence` comes back `'none'`.
+ * whenever `confidence` comes back `'none'`, which also happens whenever the archived
+ * project's name and git remote don't match any candidate, even if only one workspace
+ * folder is open.
  */
 export function matchDestination(
   project: MatchableEntry,
@@ -53,16 +54,6 @@ export function matchDestination(
       destinationPath: nameMatches[0].path,
       matchedBy: nameMatches[0].hasClaudeDir ? 'existing-claude' : 'existing-folder-name',
       confidence: nameMatches[0].hasClaudeDir ? 'high' : 'medium',
-    };
-  }
-
-  const currentWorkspaceCandidates = candidates.filter((c) => c.isCurrentWorkspaceFolder);
-  if (currentWorkspaceCandidates.length === 1 && candidates.length === 1) {
-    return {
-      projectId: project.id,
-      destinationPath: currentWorkspaceCandidates[0].path,
-      matchedBy: 'current-workspace',
-      confidence: 'medium',
     };
   }
 

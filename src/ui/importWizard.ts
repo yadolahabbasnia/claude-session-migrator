@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import * as path from 'node:path';
 import * as os from 'node:os';
+import { randomUUID } from 'node:crypto';
 import { validateArchive } from '../validation/validator';
 import { extractProjectToStaging } from '../archive/archiveReader';
 import { matchDestination } from '../migration/destinationMatcher';
@@ -14,6 +15,8 @@ import type { ProjectMigrationPreview } from '../models/migration';
 import { withCancellableProgress } from './progress';
 import { logger } from '../utils/logging';
 import { OperationCancelledError } from '../utils/errors';
+import { appendImportLogEntries } from '../utils/importLog';
+import type { ImportLogEntry } from '../models/importLog';
 import {
   gatherDestinationCandidates,
   promptForDestinationFolder,
@@ -153,6 +156,7 @@ export async function runImportWizard(preselectedFile?: vscode.Uri): Promise<voi
       return;
     }
 
+    const logEntries: ImportLogEntry[] = [];
     const results = await withCancellableProgress('Importing Claude projects...', async (reporter) => {
       const applyResults: FinalReportItem[] = [];
 
@@ -183,6 +187,15 @@ export async function runImportWizard(preselectedFile?: vscode.Uri): Promise<voi
             sourceContext,
             unresolvedReferences: preview.unresolvedReferences,
           });
+          logEntries.push({
+            id: randomUUID(),
+            kind: 'project-config',
+            label: entry.name,
+            destinationContentDir: applyResult.destinationContentDir,
+            backupPath: applyResult.backupPath,
+            existedBefore: preview.destinationExists,
+            importedAt: new Date().toISOString(),
+          });
         }
 
         applyResults.push({ id: entry.id, label: entry.name, health, backupPath: applyResult.backupPath, strategy });
@@ -190,6 +203,7 @@ export async function runImportWizard(preselectedFile?: vscode.Uri): Promise<voi
       return applyResults;
     });
 
+    await appendImportLogEntries(logEntries);
     await showFinalReport(results);
   } catch (err) {
     if (err instanceof OperationCancelledError) {

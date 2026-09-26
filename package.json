@@ -57,6 +57,11 @@
         "command": "claudeMigrator.importSessions",
         "title": "Claude Migrator: Import Sessions",
         "category": "Claude Migrator"
+      },
+      {
+        "command": "claudeMigrator.undoImport",
+        "title": "Claude Migrator: Remove Imported Items",
+        "category": "Claude Migrator"
       }
     ],
     "menus": {
