@@ -3,6 +3,7 @@ import * as path from 'node:path';
 import { scanSessionProjects, readSessionPreview } from '../discovery/sessionScanner';
 import { getClaudeHomeDir, getSessionsRootDir } from '../utils/claudeHome';
 import { operationStatus } from './operationStatus';
+import { confirmAndDelete } from './sessionDeleteWizard';
 import { logger } from '../utils/logging';
 import type { DiscoveredSessionProject } from '../models/session';
 
@@ -17,6 +18,7 @@ interface SerializedSessionProject {
   sizeLabel: string;
   gitRemote?: string;
   lastModified: string;
+  hasMemoryDir: boolean;
   sessions: Array<{ fileName: string; sizeLabel: string; messageCount: number; preview?: string }>;
 }
 
@@ -83,7 +85,64 @@ export class SessionsViewProvider implements vscode.WebviewViewProvider {
         this.post({ command: 'previewResult', title: message.fileName, turns });
         return;
       }
+      case 'deleteProject': {
+        const project = await this.findProject(message.id as string);
+        if (!project) {
+          return;
+        }
+        const outcome = await confirmAndDelete({
+          request: { kind: 'project', folderName: project.folderName },
+          title: `Delete all ${project.sessions.length} session(s) of ${labelFor(project)}?`,
+          summaryLines: [project.folderPath],
+          warning: project.hasMemoryDir
+            ? 'This project has a memory/ directory. Deleting the project removes it too.'
+            : undefined,
+        });
+        if (outcome) {
+          await this.refresh();
+        }
+        return;
+      }
+      case 'deleteSessions': {
+        const project = await this.findProject(message.id as string);
+        if (!project) {
+          return;
+        }
+        // Only accept names this project actually has right now -- the webview's list can be
+        // stale, and a name it no longer owns must not be turned into a delete.
+        const requested = new Set((message.fileNames as string[]) ?? []);
+        const known = project.sessions.map((s) => s.fileName).filter((name) => requested.has(name));
+        if (known.length === 0) {
+          this.post({ command: 'status', message: 'Nothing to delete -- the list was out of date.' });
+          await this.refresh();
+          return;
+        }
+        const outcome = await confirmAndDelete({
+          request: { kind: 'sessions', folderName: project.folderName, fileNames: known },
+          title: `Delete ${known.length} session(s) from ${labelFor(project)}?`,
+          summaryLines: known.map((name) => {
+            const session = project.sessions.find((s) => s.fileName === name);
+            return session?.firstUserMessagePreview ?? name;
+          }),
+        });
+        if (outcome) {
+          await this.refresh();
+        }
+        return;
+      }
     }
+  }
+
+  /** Re-reads the sessions on disk and finds the project by id, so a delete never acts on the
+   * webview's possibly-stale view of what exists. */
+  private async findProject(id: string): Promise<DiscoveredSessionProject | undefined> {
+    const projects = await scanSessionProjects(getSessionsRootDir(getClaudeHomeDir()));
+    const project = projects.find((p) => p.id === id);
+    if (!project) {
+      this.post({ command: 'status', message: 'That project no longer exists. Refreshing...' });
+      await this.refresh();
+    }
+    return project;
   }
 
   private async refresh(): Promise<void> {
@@ -129,8 +188,17 @@ export class SessionsViewProvider implements vscode.WebviewViewProvider {
   .project.expanded .project-actions { display: flex; }
   .session-list { display: none; margin-top: 4px; padding-left: 8px; border-left: 2px solid var(--vscode-sideBar-border, #3333); }
   .project.expanded .session-list { display: block; }
-  .session-item { padding: 3px 0; cursor: pointer; }
+  .session-item { padding: 3px 0; cursor: pointer; display: flex; align-items: baseline; gap: 6px; }
   .session-item:hover { color: var(--vscode-textLink-foreground); }
+  .session-item .session-text { flex: 1; }
+  .session-pick { flex: none; margin: 0; cursor: pointer; }
+  button.danger { background: var(--vscode-inputValidation-errorBackground, #5a1d1d); color: var(--vscode-foreground); }
+  button.danger:hover { background: var(--vscode-inputValidation-errorBorder, #be1100); }
+  button.link-danger { background: none; color: var(--vscode-descriptionForeground); padding: 0 4px; }
+  button.link-danger:hover { background: none; color: var(--vscode-errorForeground, #f48771); }
+  .selection-bar { display: none; align-items: center; gap: 6px; margin-top: 4px; }
+  .project.expanded.has-selection .selection-bar { display: flex; }
+  .memory-badge { color: var(--vscode-descriptionForeground); font-size: 11px; }
   .unknown-source { color: var(--vscode-editorWarning-foreground); }
   #preview { border-top: 2px solid var(--vscode-sideBar-border, #3333); padding: 8px; }
   #preview h4 { margin: 0 0 6px 0; }
@@ -174,21 +242,32 @@ export class SessionsViewProvider implements vscode.WebviewViewProvider {
         ? escapeHtml(p.sourcePath)
         : '<span class="unknown-source">unknown source (folder: ' + escapeHtml(p.folderName) + ')</span>';
       const gitLine = p.gitRemote ? ' &middot; ' + escapeHtml(p.gitRemote) : '';
+      // Deleting the project takes the memory/ directory with it, so say so up front rather
+      // than only in the confirmation dialog.
+      const memoryLine = p.hasMemoryDir ? ' &middot; <span class="memory-badge">has memory/</span>' : '';
       const sessions = p.sessions.map((s) => (
         '<div class="session-item" data-folder="' + escapeHtml(p.folderPath) + '" data-file="' + escapeHtml(s.fileName) + '">' +
-        '&#128172; ' + escapeHtml(s.preview || s.fileName) + ' <span class="project-meta">(' + s.messageCount + ' msgs, ' + s.sizeLabel + ')</span>' +
+        '<input type="checkbox" class="session-pick" title="Select for deletion">' +
+        '<span class="session-text">&#128172; ' + escapeHtml(s.preview || s.fileName) +
+        ' <span class="project-meta">(' + s.messageCount + ' msgs, ' + s.sizeLabel + ')</span></span>' +
+        '<button class="link-danger" data-action="delete-session" title="Delete this session">&#128465;</button>' +
         '</div>'
       )).join('');
       return (
         '<div class="project" data-id="' + escapeHtml(p.id) + '" data-folder="' + escapeHtml(p.folderPath) + '">' +
           '<div class="project-header">' +
             '<div><div class="project-name">' + escapeHtml(p.label) + '</div>' +
-            '<div class="project-meta">' + sourceLine + gitLine + '</div></div>' +
+            '<div class="project-meta">' + sourceLine + gitLine + memoryLine + '</div></div>' +
             '<div class="project-meta">' + p.sessionCount + ' session(s)<br>' + p.sizeLabel + '</div>' +
           '</div>' +
           '<div class="project-actions">' +
             '<button data-action="export">Export</button>' +
             '<button data-action="reveal" class="secondary">Reveal</button>' +
+            '<button data-action="delete-project" class="danger" title="Delete every session in this project">Delete Project</button>' +
+          '</div>' +
+          '<div class="selection-bar">' +
+            '<button data-action="delete-selected" class="danger">Delete Selected (<span class="sel-count">0</span>)</button>' +
+            '<button data-action="clear-selection" class="secondary">Clear</button>' +
           '</div>' +
           '<div class="session-list">' + sessions + '</div>' +
         '</div>'
@@ -214,10 +293,70 @@ export class SessionsViewProvider implements vscode.WebviewViewProvider {
     });
     listEl.querySelectorAll('.session-item').forEach((el) => {
       el.addEventListener('click', (e) => {
+        // The checkbox and the per-session delete button live inside the row; neither should
+        // also open the preview.
+        if (e.target.closest('.session-pick') || e.target.closest('[data-action="delete-session"]')) {
+          return;
+        }
         e.stopPropagation();
         vscode.postMessage({ command: 'preview', folderPath: el.dataset.folder, fileName: el.dataset.file });
       });
     });
+
+    listEl.querySelectorAll('[data-action="delete-project"]').forEach((el) => {
+      el.addEventListener('click', (e) => {
+        e.stopPropagation();
+        vscode.postMessage({ command: 'deleteProject', id: el.closest('.project').dataset.id });
+      });
+    });
+    listEl.querySelectorAll('[data-action="delete-session"]').forEach((el) => {
+      el.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const project = el.closest('.project');
+        const fileName = el.closest('.session-item').dataset.file;
+        vscode.postMessage({ command: 'deleteSessions', id: project.dataset.id, fileNames: [fileName] });
+      });
+    });
+    listEl.querySelectorAll('.session-pick').forEach((el) => {
+      el.addEventListener('change', (e) => {
+        e.stopPropagation();
+        updateSelection(el.closest('.project'));
+      });
+    });
+    listEl.querySelectorAll('[data-action="delete-selected"]').forEach((el) => {
+      el.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const project = el.closest('.project');
+        const fileNames = selectedFileNames(project);
+        if (fileNames.length === 0) {
+          return;
+        }
+        vscode.postMessage({ command: 'deleteSessions', id: project.dataset.id, fileNames });
+      });
+    });
+    listEl.querySelectorAll('[data-action="clear-selection"]').forEach((el) => {
+      el.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const project = el.closest('.project');
+        project.querySelectorAll('.session-pick').forEach((cb) => { cb.checked = false; });
+        updateSelection(project);
+      });
+    });
+  }
+
+  function selectedFileNames(project) {
+    return Array.from(project.querySelectorAll('.session-pick'))
+      .filter((cb) => cb.checked)
+      .map((cb) => cb.closest('.session-item').dataset.file);
+  }
+
+  function updateSelection(project) {
+    const count = selectedFileNames(project).length;
+    project.classList.toggle('has-selection', count > 0);
+    const counter = project.querySelector('.sel-count');
+    if (counter) {
+      counter.textContent = String(count);
+    }
   }
 
   function renderPreview(title, turns) {
@@ -263,6 +402,7 @@ function serialize(project: DiscoveredSessionProject): SerializedSessionProject 
     sizeLabel: formatBytes(project.totalSizeBytes),
     gitRemote: project.git?.remoteUrls[0],
     lastModified: project.lastModified,
+    hasMemoryDir: project.hasMemoryDir,
     sessions: project.sessions.map((s) => ({
       fileName: s.fileName,
       sizeLabel: formatBytes(s.sizeBytes),
@@ -270,6 +410,10 @@ function serialize(project: DiscoveredSessionProject): SerializedSessionProject 
       preview: s.firstUserMessagePreview,
     })),
   };
+}
+
+function labelFor(project: DiscoveredSessionProject): string {
+  return project.sourcePath ? path.basename(project.sourcePath) : project.folderName;
 }
 
 function formatBytes(bytes: number): string {

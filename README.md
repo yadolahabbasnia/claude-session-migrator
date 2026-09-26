@@ -64,11 +64,12 @@ All commands are under the **Claude Migrator** category in the Command Palette:
 | `Claude Migrator: Inspect Backup` | Shows a `.cmt` archive's manifest contents (both projects and sessions) without importing anything. |
 | `Claude Migrator: Validate Current Project` | Checks the current workspace folder's `.claude` for structural issues and obvious secrets. |
 | `Claude Migrator: Export This Project` | Right-click a folder in the Explorer to export just that project's `.claude` config. |
+| `Claude Migrator: Delete Sessions` | Deletes session history: pick a project, then either specific sessions or the whole project. |
 
 The **Claude Migrator** sidebar (Activity Bar icon) is a live view over your session projects --
 it lists them, lets you export a single project or launch the full export/import wizards, preview
-a session's conversation, reveal a project's folder in your OS file browser, and mirrors whatever
-export/import operation is currently in progress.
+a session's conversation, reveal a project's folder in your OS file browser, delete sessions you
+no longer want, and mirrors whatever export/import operation is currently in progress.
 
 ## Claude Code sessions workflow
 
@@ -85,6 +86,35 @@ against your chosen destination folder -- so imported sessions land exactly wher
 itself will look for them, with no extra registration step. Every `.jsonl` line is treated as an
 independent JSON document during migration: a line whose path-replacement would corrupt its JSON
 is reverted on its own, without discarding the rest of that session's successfully migrated lines.
+
+### Deleting sessions
+
+Session history is yours and nothing else reads it, so the tool lets you delete it -- from the
+sidebar or via `Claude Migrator: Delete Sessions`. Three granularities:
+
+- **One session** -- the trash icon on any session row.
+- **Several sessions** -- tick the checkbox on each row, then "Delete Selected (n)".
+- **A whole project** -- "Delete Project" in the project's action row, which removes the entire
+  `~/.claude/projects/<folder>/` directory.
+
+Every delete shows a modal listing exactly what goes away, and items are moved to the **system
+trash** rather than unlinked, so a mistake is recoverable from your OS. Where trashing isn't
+supported (some remote/container setups) the tool falls back to a permanent delete and says so in
+the result message.
+
+Two behaviors worth knowing:
+
+- A project folder can also hold a `memory/` directory. Deleting the *project* deletes that too;
+  the sidebar marks such projects `has memory/` and the confirmation repeats the warning.
+  Deleting *sessions* never touches `memory/`.
+- Deleting a project's last session leaves an empty folder behind, which the scanner would hide
+  but which would still sit on disk -- so an empty folder is pruned afterwards. A folder that
+  still contains anything (a `memory/` directory, say) is left alone.
+
+Deletion targets are re-derived from the sessions root and re-validated before anything is
+removed: a project must be a direct child of `~/.claude/projects/`, and a session must be a bare
+`*.jsonl` name inside one. Paths coming from the webview are never trusted as-is, and the
+sidebar re-scans disk before each delete so a stale list can't delete the wrong thing.
 
 ### Why the session folder name can't just be decoded
 

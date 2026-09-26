@@ -58,6 +58,21 @@ export class OperationCancelledError extends MigratorError {
   }
 }
 
+/**
+ * Raised when a deletion request names a path that is not a session file or project directory
+ * directly under `<claudeHome>/projects/`. Deletion targets arrive as plain strings from the
+ * webview, so every one is re-derived and re-checked against the sessions root before anything
+ * is removed -- a bug or a crafted value must never be able to delete an arbitrary path.
+ */
+export class UnsafeDeletionTargetError extends MigratorError {
+  constructor(
+    public readonly targetPath: string,
+    public readonly reason: string,
+  ) {
+    super(`Refusing to delete ${targetPath}: ${reason}`, 'UNSAFE_DELETION_TARGET');
+  }
+}
+
 export function isNodeError(err: unknown): err is NodeJS.ErrnoException {
   return err instanceof Error && 'code' in err;
 }

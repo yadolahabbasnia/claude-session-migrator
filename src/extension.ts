@@ -7,6 +7,7 @@ import { registerValidateCommand } from './commands/validate';
 import { registerExportSessionsCommand } from './commands/exportSessions';
 import { registerImportSessionsCommand } from './commands/importSessions';
 import { registerUndoImportCommand } from './commands/undoImport';
+import { registerDeleteSessionsCommand } from './commands/deleteSessions';
 import { SessionsViewProvider } from './ui/sessionsViewProvider';
 import { logger } from './utils/logging';
 import { getDebugLoggingEnabled } from './utils/config';
@@ -34,6 +35,7 @@ export function activate(context: vscode.ExtensionContext): void {
   registerExportSessionsCommand(context);
   registerImportSessionsCommand(context);
   registerUndoImportCommand(context);
+  registerDeleteSessionsCommand(context);
 
   const sessionsViewProvider = new SessionsViewProvider(context.extensionUri);
   context.subscriptions.push(
