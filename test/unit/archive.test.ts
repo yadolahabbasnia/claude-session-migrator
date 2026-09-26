@@ -118,7 +118,7 @@ describe('archive round trip', () => {
       compress: true,
     });
 
-    const validation = validateArchive(archiveFile);
+    const validation = await validateArchive(archiveFile);
     expect(validation.ok).toBe(true);
     expect(validation.errors).toHaveLength(0);
   });
@@ -137,7 +137,7 @@ describe('archive round trip', () => {
     const key = Object.keys(opened.checksums)[0];
     opened.checksums[key] = '0'.repeat(64);
 
-    const verification = verifyChecksums(opened, 'projects/path:project-a-test/claude/');
+    const verification = await verifyChecksums(opened, 'projects/path:project-a-test/claude/');
     expect(verification.ok).toBe(false);
     expect(verification.mismatched).toContain(key);
   });

@@ -1,4 +1,4 @@
-import { openArchive, verifyChecksums, type OpenedArchive } from '../archive/archiveReader';
+import { openArchive, verifyChecksums, type OpenedArchive, type FileProgress } from '../archive/archiveReader';
 import { MANIFEST_FORMAT_VERSION } from '../models/manifest';
 import { InvalidArchiveError } from '../utils/errors';
 
@@ -10,9 +10,16 @@ export interface ArchiveValidationResult {
   formatVersion?: number;
 }
 
+export interface ValidateArchiveOptions {
+  onProgress?: (label: string, p: FileProgress) => void;
+}
+
 /** Validates a .cmt archive is readable, has a supported manifest, and passes checksum
  * verification, without extracting anything. */
-export function validateArchive(archiveFile: string): ArchiveValidationResult {
+export async function validateArchive(
+  archiveFile: string,
+  options: ValidateArchiveOptions = {},
+): Promise<ArchiveValidationResult> {
   const errors: string[] = [];
   const warnings: string[] = [];
 
@@ -35,7 +42,9 @@ export function validateArchive(archiveFile: string): ArchiveValidationResult {
   }
 
   for (const project of archive.manifest.projects) {
-    const verification = verifyChecksums(archive, `projects/${project.id}/claude/`);
+    const verification = await verifyChecksums(archive, `projects/${project.id}/claude/`, (p) =>
+      options.onProgress?.(project.name, p),
+    );
     if (!verification.ok) {
       errors.push(
         `Checksum verification failed for project "${project.name}": ${
@@ -46,7 +55,9 @@ export function validateArchive(archiveFile: string): ArchiveValidationResult {
   }
 
   for (const sessionProject of archive.manifest.sessionProjects) {
-    const verification = verifyChecksums(archive, `sessions/${sessionProject.id}/data/`);
+    const verification = await verifyChecksums(archive, `sessions/${sessionProject.id}/data/`, (p) =>
+      options.onProgress?.(sessionProject.folderName, p),
+    );
     if (!verification.ok) {
       errors.push(
         `Checksum verification failed for session project "${sessionProject.folderName}": ${

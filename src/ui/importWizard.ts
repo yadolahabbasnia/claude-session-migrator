@@ -32,7 +32,11 @@ export async function runImportWizard(preselectedFile?: vscode.Uri): Promise<voi
       return;
     }
 
-    const validation = validateArchive(archiveFile);
+    const validation = await withCancellableProgress('Validating archive...', async (reporter) => {
+      return validateArchive(archiveFile, {
+        onProgress: (label, p) => reporter.report(`${label}: ${p.processed}/${p.total} file(s)`),
+      });
+    });
     if (!validation.ok || !validation.archive) {
       vscode.window.showErrorMessage(
         `Claude Migrator: archive validation failed.\n${validation.errors.join('\n')}`,
@@ -99,10 +103,13 @@ export async function runImportWizard(preselectedFile?: vscode.Uri): Promise<voi
         if (!destinationPath || reporter.isCancelled()) {
           continue;
         }
-        reporter.report(`Analyzing ${entry.name}...`);
+        reporter.report(`Extracting ${entry.name}...`);
         const stagingDir = await createTempDir(`import-${entry.id}`);
         tempDirs.push(stagingDir);
-        await extractProjectToStaging(archive, entry.id, stagingDir);
+        await extractProjectToStaging(archive, entry.id, stagingDir, (p) =>
+          reporter.report(`Extracting ${entry.name}: ${p.processed}/${p.total} file(s)`),
+        );
+        reporter.report(`Analyzing ${entry.name} for machine-specific paths...`);
 
         const sourceContext: PathContext = {
           projectRoot: entry.sourcePath,
@@ -125,6 +132,7 @@ export async function runImportWizard(preselectedFile?: vscode.Uri): Promise<voi
           destinationContentDir: path.join(destinationPath, '.claude'),
           sourceContext,
           destContext,
+          onProgress: (p) => reporter.report(`Analyzing ${entry.name}: ${p.processed}/${p.total} (${p.fileName})`),
         });
 
         previews.push({ entry, preview, stagingDir, sourceContext, destContext });
@@ -161,6 +169,10 @@ export async function runImportWizard(preselectedFile?: vscode.Uri): Promise<voi
           strategy,
           sourceContext,
           destContext,
+          onProgress: (p) =>
+            reporter.report(
+              `${p.stage === 'backup' ? 'Backing up' : 'Writing'} ${entry.name}: ${p.processed} (${p.fileName})`,
+            ),
         });
 
         let health: HealthCheckReport | undefined;

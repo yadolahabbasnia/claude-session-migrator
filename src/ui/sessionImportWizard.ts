@@ -38,7 +38,11 @@ export async function runSessionImportWizard(preselectedFile?: vscode.Uri): Prom
       return;
     }
 
-    const validation = validateArchive(archiveFile);
+    const validation = await withCancellableProgress('Validating archive...', async (reporter) => {
+      return validateArchive(archiveFile, {
+        onProgress: (label, p) => reporter.report(`${label}: ${p.processed}/${p.total} file(s)`),
+      });
+    });
     if (!validation.ok || !validation.archive) {
       vscode.window.showErrorMessage(
         `Claude Migrator: archive validation failed.\n${validation.errors.join('\n')}`,
@@ -117,10 +121,13 @@ export async function runSessionImportWizard(preselectedFile?: vscode.Uri): Prom
         if (!destinationPath || reporter.isCancelled()) {
           continue;
         }
-        reporter.report(`Analyzing ${entryLabel(entry)}...`);
+        reporter.report(`Extracting ${entryLabel(entry)}...`);
         const stagingDir = await createTempDir(`import-session-${entry.id}`);
         tempDirs.push(stagingDir);
-        await extractSessionProjectToStaging(archive, entry.id, stagingDir);
+        await extractSessionProjectToStaging(archive, entry.id, stagingDir, (p) =>
+          reporter.report(`Extracting ${entryLabel(entry)}: ${p.processed}/${p.total} file(s)`),
+        );
+        reporter.report(`Analyzing ${entryLabel(entry)} for machine-specific paths...`);
 
         const sourceContext: PathContext = {
           projectRoot: entry.sourcePath ?? '',
@@ -143,6 +150,8 @@ export async function runSessionImportWizard(preselectedFile?: vscode.Uri): Prom
           destinationContentDir: path.join(sessionsRoot, encodeProjectPath(destinationPath)),
           sourceContext,
           destContext,
+          onProgress: (p) =>
+            reporter.report(`Analyzing ${entryLabel(entry)}: ${p.processed}/${p.total} (${p.fileName})`),
         });
 
         previews.push({ entry, preview, stagingDir, sourceContext, destContext });
@@ -179,6 +188,10 @@ export async function runSessionImportWizard(preselectedFile?: vscode.Uri): Prom
           strategy,
           sourceContext,
           destContext,
+          onProgress: (p) =>
+            reporter.report(
+              `${p.stage === 'backup' ? 'Backing up' : 'Writing'} ${entryLabel(entry)}: ${p.processed} (${p.fileName})`,
+            ),
         });
 
         let health: HealthCheckReport | undefined;

@@ -2,6 +2,8 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { walkFiles, looksBinary, pathExists } from '../utils/filesystem';
 import { toPortableRelativePath } from '../utils/paths';
+import { computeLineStarts, lineNumberForIndex } from '../utils/text';
+import { createPeriodicYielder } from '../utils/async';
 import { transformFileContent } from './ruleEngine';
 import { classifyPortablePath, type PathContext } from './pathResolver';
 import type {
@@ -9,6 +11,12 @@ import type {
   ProjectMigrationPreview,
   UnresolvedReference,
 } from '../models/migration';
+
+export interface PreviewProgress {
+  processed: number;
+  total: number;
+  fileName: string;
+}
 
 export interface BuildPreviewOptions {
   projectId: string;
@@ -24,6 +32,7 @@ export interface BuildPreviewOptions {
   destinationContentDir: string;
   sourceContext: PathContext;
   destContext: PathContext;
+  onProgress?: (p: PreviewProgress) => void;
 }
 
 export async function buildMigrationPreview(
@@ -40,6 +49,10 @@ export async function buildMigrationPreview(
   let modifiedFiles = 0;
   let existingFilesPreserved = 0;
 
+  const total = options.onProgress ? await countFiles(options.stagedContentDir) : 0;
+  let processed = 0;
+  const yieldPeriodically = createPeriodicYielder();
+
   for await (const staged of walkFiles(options.stagedContentDir)) {
     const relativePath = toPortableRelativePath(staged.relativePath);
     const destFilePath = path.join(destinationContentDir, ...relativePath.split('/'));
@@ -50,12 +63,8 @@ export async function buildMigrationPreview(
     let finalContent: Buffer = buffer;
 
     if (!isBinary) {
-      const transformed = transformFileContent(
-        relativePath,
-        buffer.toString('utf8'),
-        options.sourceContext,
-        options.destContext,
-      );
+      const text = buffer.toString('utf8');
+      const transformed = transformFileContent(relativePath, text, options.sourceContext, options.destContext);
       replacements = transformed.replacements;
       finalContent = Buffer.from(transformed.content, 'utf8');
       totalReplacements += replacements;
@@ -66,15 +75,18 @@ export async function buildMigrationPreview(
         );
       }
 
-      for (const unresolved of transformed.unresolved) {
-        unresolvedReferences.push({
-          projectId: options.projectId,
-          file: relativePath,
-          line: lineForIndex(buffer.toString('utf8'), unresolved.index),
-          originalPath: unresolved.originalPath,
-          kind: classifyPortablePath(unresolved.originalPath, options.sourceContext),
-          resolution: 'unresolved',
-        });
+      if (transformed.unresolved.length > 0) {
+        const lineStarts = computeLineStarts(text);
+        for (const unresolved of transformed.unresolved) {
+          unresolvedReferences.push({
+            projectId: options.projectId,
+            file: relativePath,
+            line: lineNumberForIndex(lineStarts, unresolved.index),
+            originalPath: unresolved.originalPath,
+            kind: classifyPortablePath(unresolved.originalPath, options.sourceContext),
+            resolution: 'unresolved',
+          });
+        }
       }
     }
 
@@ -95,6 +107,9 @@ export async function buildMigrationPreview(
     }
 
     files.push({ relativePath, action, isBinary, pathReplacements: replacements });
+    processed += 1;
+    options.onProgress?.({ processed, total, fileName: relativePath });
+    await yieldPeriodically();
   }
 
   if (unresolvedReferences.length > 0) {
@@ -120,12 +135,11 @@ export async function buildMigrationPreview(
   };
 }
 
-function lineForIndex(content: string, index: number): number {
-  let line = 1;
-  for (let i = 0; i < index && i < content.length; i++) {
-    if (content[i] === '\n') {
-      line += 1;
-    }
+async function countFiles(dir: string): Promise<number> {
+  let count = 0;
+  for await (const file of walkFiles(dir)) {
+    void file;
+    count += 1;
   }
-  return line;
+  return count;
 }

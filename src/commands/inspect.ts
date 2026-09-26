@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { validateArchive } from '../validation/validator';
+import { withCancellableProgress } from '../ui/progress';
 import { logger } from '../utils/logging';
 
 export function registerInspectCommand(context: vscode.ExtensionContext): void {
@@ -19,7 +20,11 @@ async function runInspectCommand(): Promise<void> {
     return;
   }
 
-  const result = validateArchive(archiveFile);
+  const result = await withCancellableProgress('Validating archive...', async (reporter) => {
+    return validateArchive(archiveFile, {
+      onProgress: (label, p) => reporter.report(`${label}: ${p.processed}/${p.total} file(s)`),
+    });
+  });
   if (!result.ok || !result.archive) {
     vscode.window.showErrorMessage(`Archive is invalid:\n${result.errors.join('\n')}`, { modal: true });
     return;

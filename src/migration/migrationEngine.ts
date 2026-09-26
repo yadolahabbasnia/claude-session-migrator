@@ -2,6 +2,7 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { walkFiles, looksBinary, ensureDir, pathExists } from '../utils/filesystem';
 import { toPortableRelativePath } from '../utils/paths';
+import { createPeriodicYielder } from '../utils/async';
 import { transformFileContent, mergeJsonlContent } from './ruleEngine';
 import type { PathContext } from './pathResolver';
 import type { ExistingDataStrategy, ProjectMigrationPreview } from '../models/migration';
@@ -10,12 +11,19 @@ import { logger } from '../utils/logging';
 /** The subset of strategies that can actually be applied ('cancel' aborts before this point). */
 export type ApplyStrategy = Exclude<ExistingDataStrategy, 'cancel'>;
 
+export interface ApplyProgress {
+  stage: 'backup' | 'write';
+  processed: number;
+  fileName: string;
+}
+
 export interface ApplyMigrationOptions {
   preview: ProjectMigrationPreview;
   stagedContentDir: string;
   strategy: ApplyStrategy;
   sourceContext: PathContext;
   destContext: PathContext;
+  onProgress?: (p: ApplyProgress) => void;
 }
 
 export interface ApplyMigrationResult {
@@ -52,7 +60,7 @@ export async function applyMigration(options: ApplyMigrationOptions): Promise<Ap
   let backupPath: string | undefined;
   const destinationExists = await pathExists(destinationContentDir);
   if (destinationExists) {
-    backupPath = await createBackup(destinationContentDir);
+    backupPath = await createBackup(destinationContentDir, options.onProgress);
     logger.info('Created backup of existing content directory', { backupPath });
   }
 
@@ -73,10 +81,15 @@ export async function applyMigration(options: ApplyMigrationOptions): Promise<Ap
   }
 }
 
-async function createBackup(destinationContentDir: string): Promise<string> {
+async function createBackup(
+  destinationContentDir: string,
+  onProgress?: (p: ApplyProgress) => void,
+): Promise<string> {
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
   const backupPath = `${destinationContentDir}.backup-${timestamp}`;
-  await copyRecursive(destinationContentDir, backupPath);
+  await copyRecursive(destinationContentDir, backupPath, (processed, fileName) =>
+    onProgress?.({ stage: 'backup', processed, fileName }),
+  );
   return backupPath;
 }
 
@@ -97,9 +110,12 @@ async function replaceAll(options: ApplyMigrationOptions, destinationContentDir:
   await fs.rm(destinationContentDir, { recursive: true, force: true });
   await ensureDir(destinationContentDir);
   let count = 0;
+  const yieldPeriodically = createPeriodicYielder();
   for await (const staged of walkFiles(options.stagedContentDir)) {
     await writeTransformed(options, staged.absolutePath, staged.relativePath, destinationContentDir);
     count += 1;
+    options.onProgress?.({ stage: 'write', processed: count, fileName: staged.relativePath });
+    await yieldPeriodically();
   }
   return count;
 }
@@ -107,11 +123,14 @@ async function replaceAll(options: ApplyMigrationOptions, destinationContentDir:
 async function mergeInto(options: ApplyMigrationOptions, destinationContentDir: string): Promise<number> {
   await ensureDir(destinationContentDir);
   let count = 0;
+  const yieldPeriodically = createPeriodicYielder();
   for await (const staged of walkFiles(options.stagedContentDir)) {
     await writeTransformed(options, staged.absolutePath, staged.relativePath, destinationContentDir, {
       jsonMerge: true,
     });
     count += 1;
+    options.onProgress?.({ stage: 'write', processed: count, fileName: staged.relativePath });
+    await yieldPeriodically();
   }
   return count;
 }
@@ -193,11 +212,20 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-async function copyRecursive(source: string, destination: string): Promise<void> {
+async function copyRecursive(
+  source: string,
+  destination: string,
+  onProgress?: (processed: number, fileName: string) => void,
+): Promise<void> {
   await ensureDir(destination);
+  const yieldPeriodically = createPeriodicYielder();
+  let processed = 0;
   for await (const file of walkFiles(source)) {
     const destPath = path.join(destination, ...toPortableRelativePath(file.relativePath).split('/'));
     await ensureDir(path.dirname(destPath));
     await fs.copyFile(file.absolutePath, destPath);
+    processed += 1;
+    onProgress?.(processed, file.relativePath);
+    await yieldPeriodically();
   }
 }
