@@ -43,6 +43,16 @@ export function getGitSyncMode(): GitSyncMode {
   return vscode.workspace.getConfiguration('claudeMigrator').get<GitSyncMode>('gitSync.mode', 'local');
 }
 
+/**
+ * Whether session changes should be auto-committed and pushed shortly after they happen while
+ * `gitSync.mode` is `'git'`. Only takes effect in `'git'` mode; set to `false` to stay in `'git'`
+ * mode (sidebar/import still point at the repo) but push only when you explicitly run
+ * "Sync Sessions via Git".
+ */
+export function getGitSyncAutoSyncEnabled(): boolean {
+  return vscode.workspace.getConfiguration('claudeMigrator').get<boolean>('gitSync.autoSync', true);
+}
+
 /** Persists a git-sync setting to user (global) settings, e.g. after the wizard prompts for it. */
 export async function setGitSyncSetting(
   key: 'repoUrl' | 'localPath' | 'branch' | 'archiveFileName' | 'mode',

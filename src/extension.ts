@@ -10,6 +10,7 @@ import { registerUndoImportCommand } from './commands/undoImport';
 import { registerDeleteSessionsCommand } from './commands/deleteSessions';
 import { registerSyncSessionsViaGitCommand } from './commands/syncSessionsViaGit';
 import { SessionsViewProvider } from './ui/sessionsViewProvider';
+import { SessionsAutoSyncWatcher } from './utils/sessionsWatcher';
 import { logger } from './utils/logging';
 import { getDebugLoggingEnabled } from './utils/config';
 
@@ -44,6 +45,8 @@ export function activate(context: vscode.ExtensionContext): void {
     sessionsViewProvider,
     vscode.window.registerWebviewViewProvider(SessionsViewProvider.viewType, sessionsViewProvider),
   );
+
+  context.subscriptions.push(new SessionsAutoSyncWatcher());
 
   logger.info('Claude Project Migrator activated');
 }

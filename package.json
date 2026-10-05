@@ -157,6 +157,11 @@
           "enum": ["local", "git"],
           "default": "local",
           "description": "Which reference the sidebar treats as current: 'local' (plain ~/.claude/projects) or 'git' (the configured sync repository). Switched automatically to 'git' the first time you configure sync, and back to 'local' only when you run 'Claude Migrator: Use Local Sessions Only' -- neither switch deletes any session files."
+        },
+        "claudeMigrator.gitSync.autoSync": {
+          "type": "boolean",
+          "default": true,
+          "description": "While gitSync.mode is 'git', automatically commit and push session changes a short while after they happen, instead of requiring a manual 'Sync Sessions via Git' push every time. Has no effect while gitSync.mode is 'local'. Files that trip the secret scanner are always skipped (never auto-included) rather than prompted for, since this runs unattended."
         }
       }
     }

@@ -128,9 +128,22 @@ right where you left off.
 own `projects/` subfolder), the sync wizard detects this and asks which profile's sessions you
 want to push or pull, rather than silently guessing.
 
+**Auto-sync:** once `gitSync.mode` is `git`, the extension watches `<claudeHome>/projects/` for
+changes (new or updated sessions) and, ~15 seconds after things go quiet, automatically commits
+and pushes to the configured repository -- no need to run "Sync Sessions via Git" by hand every
+time. This only ever writes into the dedicated sync-repo checkout, never into
+`~/.claude/projects/` itself, and it never prompts: any file that trips the secret scanner is
+silently excluded from the auto-push (logged to the Claude Migrator output channel) rather than
+included or asked about, since nobody's watching to answer. If a push can't go through cleanly
+(e.g. it needs a manual merge), auto-sync logs a warning and quietly retries on the next change
+instead of interrupting you with an error dialog. Set `claudeMigrator.gitSync.autoSync` to `false`
+to stay in `git` mode (sidebar/import still point at the repo) but push only when you explicitly
+run the sync command.
+
 Settings: `claudeMigrator.gitSync.repoUrl`, `claudeMigrator.gitSync.localPath`,
 `claudeMigrator.gitSync.branch` (default `main`), `claudeMigrator.gitSync.archiveFileName`
-(default `claude-sessions.cmt`), and `claudeMigrator.gitSync.mode` (`local` or `git`).
+(default `claude-sessions.cmt`), `claudeMigrator.gitSync.mode` (`local` or `git`), and
+`claudeMigrator.gitSync.autoSync` (default `true`).
 
 ### Deleting sessions
 
