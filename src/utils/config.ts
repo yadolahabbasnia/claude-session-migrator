@@ -30,9 +30,22 @@ export function getGitSyncArchiveFileName(): string {
     .get<string>('gitSync.archiveFileName', 'claude-sessions.cmt');
 }
 
+export type GitSyncMode = 'local' | 'git';
+
+/**
+ * Which reference the sidebar and sync wizard currently treat as "the" sessions source:
+ * `'local'` (default) is plain `~/.claude/projects/`, untouched by git sync. `'git'` means the
+ * user has pointed sync at a repository and wants it treated as the reference going forward --
+ * this never deletes or moves local session files, it only changes what the UI points at until
+ * the user explicitly switches back with "Use Local Sessions Only".
+ */
+export function getGitSyncMode(): GitSyncMode {
+  return vscode.workspace.getConfiguration('claudeMigrator').get<GitSyncMode>('gitSync.mode', 'local');
+}
+
 /** Persists a git-sync setting to user (global) settings, e.g. after the wizard prompts for it. */
 export async function setGitSyncSetting(
-  key: 'repoUrl' | 'localPath' | 'branch' | 'archiveFileName',
+  key: 'repoUrl' | 'localPath' | 'branch' | 'archiveFileName' | 'mode',
   value: string,
 ): Promise<void> {
   await vscode.workspace

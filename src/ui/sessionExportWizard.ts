@@ -16,13 +16,17 @@ import { runSecurityReview, pickArchiveDestinationFile, formatBytes } from './ex
  * skips the multi-select step and exports just that one session project.
  * @param preselectedDestinationFile When provided (e.g. from the git-sync wizard), skips the
  * save-file dialog and writes the archive directly to this path.
+ * @param sessionsRootOverride When provided (e.g. from the git-sync wizard after the user picked
+ * a non-default Claude Code profile), scans this `<claudeHome>/projects` dir instead of the one
+ * `CLAUDE_CONFIG_DIR`/the default would resolve to.
  */
 export async function runSessionExportWizard(
   preselectedProjectId?: string,
   preselectedDestinationFile?: string,
+  sessionsRootOverride?: string,
 ): Promise<boolean> {
   try {
-    const sessionsRoot = getSessionsRootDir(getClaudeHomeDir());
+    const sessionsRoot = sessionsRootOverride ?? getSessionsRootDir(getClaudeHomeDir());
 
     const projects = await withCancellableProgress('Scanning Claude Code sessions...', async (reporter) => {
       return scanSessionProjects(sessionsRoot, {

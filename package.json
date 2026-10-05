@@ -72,6 +72,16 @@
         "command": "claudeMigrator.syncSessionsViaGit",
         "title": "Claude Migrator: Sync Sessions via Git",
         "category": "Claude Migrator"
+      },
+      {
+        "command": "claudeMigrator.configureGitSyncRepo",
+        "title": "Claude Migrator: Change Git Sync Repository",
+        "category": "Claude Migrator"
+      },
+      {
+        "command": "claudeMigrator.useLocalSessionsOnly",
+        "title": "Claude Migrator: Use Local Sessions Only",
+        "category": "Claude Migrator"
       }
     ],
     "menus": {
@@ -141,6 +151,12 @@
           "type": "string",
           "default": "claude-sessions.cmt",
           "description": "Name of the .cmt archive file committed to the git-sync repository."
+        },
+        "claudeMigrator.gitSync.mode": {
+          "type": "string",
+          "enum": ["local", "git"],
+          "default": "local",
+          "description": "Which reference the sidebar treats as current: 'local' (plain ~/.claude/projects) or 'git' (the configured sync repository). Switched automatically to 'git' the first time you configure sync, and back to 'local' only when you run 'Claude Migrator: Use Local Sessions Only' -- neither switch deletes any session files."
         }
       }
     }

@@ -33,7 +33,17 @@ function entryLabel(entry: ManifestSessionEntry): string {
   return entry.sourcePath ? path.basename(entry.sourcePath) : entry.folderName;
 }
 
-export async function runSessionImportWizard(preselectedFile?: vscode.Uri): Promise<void> {
+/**
+ * @param preselectedFile When provided (e.g. from the git-sync wizard), skips the open-file
+ * dialog and validates this archive directly.
+ * @param sessionsRootOverride When provided (e.g. from the git-sync wizard after the user picked
+ * a non-default Claude Code profile), writes imported sessions under this `<claudeHome>/projects`
+ * dir instead of the one `CLAUDE_CONFIG_DIR`/the default would resolve to.
+ */
+export async function runSessionImportWizard(
+  preselectedFile?: vscode.Uri,
+  sessionsRootOverride?: string,
+): Promise<void> {
   const tempDirs: string[] = [];
   try {
     const archiveFile = preselectedFile?.fsPath ?? (await pickArchiveFile());
@@ -69,7 +79,7 @@ export async function runSessionImportWizard(preselectedFile?: vscode.Uri): Prom
     }
 
     const candidates = await gatherDestinationCandidates();
-    const sessionsRoot = getSessionsRootDir(getClaudeHomeDir());
+    const sessionsRoot = sessionsRootOverride ?? getSessionsRootDir(getClaudeHomeDir());
 
     const mappings = new Map<string, string>(); // entry.id -> destination project path
     for (const entry of selectedEntries) {

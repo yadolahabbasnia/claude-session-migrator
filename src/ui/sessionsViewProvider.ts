@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import * as path from 'node:path';
 import { scanSessionProjects, readSessionPreview } from '../discovery/sessionScanner';
 import { getClaudeHomeDir, getSessionsRootDir } from '../utils/claudeHome';
+import { getGitSyncMode, getGitSyncRepoUrl } from '../utils/config';
 import { operationStatus } from './operationStatus';
 import { confirmAndDelete } from './sessionDeleteWizard';
 import { logger } from '../utils/logging';
@@ -75,6 +76,18 @@ export class SessionsViewProvider implements vscode.WebviewViewProvider {
         return;
       case 'exportProject':
         await vscode.commands.executeCommand('claudeMigrator.exportSessions', message.id as string);
+        return;
+      case 'syncGit':
+        await vscode.commands.executeCommand('claudeMigrator.syncSessionsViaGit');
+        this.postGitSyncState();
+        return;
+      case 'configureGitRepo':
+        await vscode.commands.executeCommand('claudeMigrator.configureGitSyncRepo');
+        this.postGitSyncState();
+        return;
+      case 'useLocalOnly':
+        await vscode.commands.executeCommand('claudeMigrator.useLocalSessionsOnly');
+        this.postGitSyncState();
         return;
       case 'reveal':
         await vscode.commands.executeCommand('revealFileInOS', vscode.Uri.file(message.folderPath as string));
@@ -151,6 +164,11 @@ export class SessionsViewProvider implements vscode.WebviewViewProvider {
     const projects = await scanSessionProjects(sessionsRoot);
     this.post({ command: 'projects', data: projects.map(serialize), sessionsRoot });
     this.post({ command: 'status', message: `Found ${projects.length} session project(s).`, done: true });
+    this.postGitSyncState();
+  }
+
+  private postGitSyncState(): void {
+    this.post({ command: 'gitSyncState', mode: getGitSyncMode(), repoUrl: getGitSyncRepoUrl() });
   }
 
   private post(message: Record<string, unknown>): void {
@@ -206,13 +224,25 @@ export class SessionsViewProvider implements vscode.WebviewViewProvider {
   .turn .role { font-weight: 600; font-size: 11px; color: var(--vscode-textLink-foreground); }
   .turn .text { white-space: pre-wrap; font-size: 12px; margin-top: 2px; }
   .empty { padding: 16px 8px; color: var(--vscode-descriptionForeground); }
+  .git-sync-bar { display: none; align-items: center; gap: 6px; padding: 4px 8px; font-size: 11px; color: var(--vscode-descriptionForeground); border-bottom: 1px solid var(--vscode-sideBar-border, transparent); }
+  .git-sync-bar.active { display: flex; }
+  .git-sync-bar .repo { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .git-sync-bar button.link { background: none; color: var(--vscode-textLink-foreground); padding: 0; font-size: 11px; }
+  .git-sync-bar button.link:hover { text-decoration: underline; background: none; }
 </style>
 </head>
 <body>
   <div class="toolbar">
     <button id="exportAll">Export Sessions...</button>
     <button id="importSessions" class="secondary">Import Sessions...</button>
+    <button id="syncGit" class="secondary" title="Push or pull sessions through a git repository">Sync via Git...</button>
     <button id="refresh" class="secondary" title="Refresh">&#x21bb;</button>
+  </div>
+  <div id="gitSyncBar" class="git-sync-bar">
+    <span>&#128279;</span>
+    <span class="repo" id="gitSyncRepo"></span>
+    <button class="link" id="configureGitRepo">Change repo</button>
+    <button class="link" id="useLocalOnly">Use local only</button>
   </div>
   <div id="status">Loading...</div>
   <div id="list"></div>
@@ -226,7 +256,21 @@ export class SessionsViewProvider implements vscode.WebviewViewProvider {
 
   document.getElementById('exportAll').addEventListener('click', () => vscode.postMessage({ command: 'exportAll' }));
   document.getElementById('importSessions').addEventListener('click', () => vscode.postMessage({ command: 'importSessions' }));
+  document.getElementById('syncGit').addEventListener('click', () => vscode.postMessage({ command: 'syncGit' }));
   document.getElementById('refresh').addEventListener('click', () => vscode.postMessage({ command: 'refresh' }));
+  document.getElementById('configureGitRepo').addEventListener('click', () => vscode.postMessage({ command: 'configureGitRepo' }));
+  document.getElementById('useLocalOnly').addEventListener('click', () => vscode.postMessage({ command: 'useLocalOnly' }));
+
+  function renderGitSyncState(mode, repoUrl) {
+    const bar = document.getElementById('gitSyncBar');
+    const repoEl = document.getElementById('gitSyncRepo');
+    const active = mode === 'git' && !!repoUrl;
+    bar.classList.toggle('active', active);
+    if (active) {
+      repoEl.textContent = repoUrl;
+      repoEl.title = repoUrl;
+    }
+  }
 
   function escapeHtml(s) {
     return (s || '').replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -378,6 +422,8 @@ export class SessionsViewProvider implements vscode.WebviewViewProvider {
       statusEl.textContent = msg.message || '';
     } else if (msg.command === 'previewResult') {
       renderPreview(msg.title, msg.turns);
+    } else if (msg.command === 'gitSyncState') {
+      renderGitSyncState(msg.mode, msg.repoUrl);
     } else if (msg.command === 'error') {
       statusEl.textContent = 'Error: ' + msg.message;
     }
