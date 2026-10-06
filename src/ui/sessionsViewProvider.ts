@@ -3,6 +3,7 @@ import * as path from 'node:path';
 import { scanSessionProjects, readSessionPreview } from '../discovery/sessionScanner';
 import { getClaudeHomeDir, getSessionsRootDir } from '../utils/claudeHome';
 import { getGitSyncMode, getGitSyncRepoUrl } from '../utils/config';
+import { detectSessionBackupCandidates } from '../discovery/backupDetector';
 import { operationStatus } from './operationStatus';
 import { confirmAndDelete } from './sessionDeleteWizard';
 import { logger } from '../utils/logging';
@@ -89,6 +90,10 @@ export class SessionsViewProvider implements vscode.WebviewViewProvider {
         await vscode.commands.executeCommand('claudeMigrator.useLocalSessionsOnly');
         this.postGitSyncState();
         return;
+      case 'mergeBackups':
+        await vscode.commands.executeCommand('claudeMigrator.mergeSessionBackups');
+        await this.refresh();
+        return;
       case 'reveal':
         await vscode.commands.executeCommand('revealFileInOS', vscode.Uri.file(message.folderPath as string));
         return;
@@ -162,8 +167,22 @@ export class SessionsViewProvider implements vscode.WebviewViewProvider {
     const sessionsRoot = getSessionsRootDir(getClaudeHomeDir());
     this.post({ command: 'status', message: 'Scanning sessions...' });
     const projects = await scanSessionProjects(sessionsRoot);
-    this.post({ command: 'projects', data: projects.map(serialize), sessionsRoot });
-    this.post({ command: 'status', message: `Found ${projects.length} session project(s).`, done: true });
+
+    // Pre-import safety backups (`<project>.backup-<timestamp>`, see migrationEngine.ts) are not
+    // separate projects -- they're redundant duplicates of a live folder sitting right next to
+    // them. Hiding them from the main list (instead of listing them as if they were their own
+    // project) keeps the list honest; "Merge Session Backups" is how you get them back/clear them.
+    const backupCandidates = detectSessionBackupCandidates(sessionsRoot, projects.map((p) => p.folderName));
+    const mergeableNames = new Set(backupCandidates.map((c) => c.backupFolderName));
+    const visibleProjects = projects.filter((p) => !mergeableNames.has(p.folderName));
+
+    this.post({ command: 'projects', data: visibleProjects.map(serialize), sessionsRoot });
+    this.post({
+      command: 'status',
+      message: `Found ${visibleProjects.length} session project(s).`,
+      done: true,
+    });
+    this.post({ command: 'backupCandidates', count: backupCandidates.length });
     this.postGitSyncState();
   }
 
@@ -229,6 +248,11 @@ export class SessionsViewProvider implements vscode.WebviewViewProvider {
   .git-sync-bar .repo { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .git-sync-bar button.link { background: none; color: var(--vscode-textLink-foreground); padding: 0; font-size: 11px; }
   .git-sync-bar button.link:hover { text-decoration: underline; background: none; }
+  .backup-bar { display: none; align-items: center; gap: 6px; padding: 4px 8px; font-size: 11px; color: var(--vscode-editorWarning-foreground); border-bottom: 1px solid var(--vscode-sideBar-border, transparent); }
+  .backup-bar.active { display: flex; }
+  .backup-bar .msg { flex: 1; }
+  .backup-bar button.link { background: none; color: var(--vscode-textLink-foreground); padding: 0; font-size: 11px; }
+  .backup-bar button.link:hover { text-decoration: underline; background: none; }
 </style>
 </head>
 <body>
@@ -243,6 +267,11 @@ export class SessionsViewProvider implements vscode.WebviewViewProvider {
     <span class="repo" id="gitSyncRepo"></span>
     <button class="link" id="configureGitRepo">Change repo</button>
     <button class="link" id="useLocalOnly">Use local only</button>
+  </div>
+  <div id="backupBar" class="backup-bar">
+    <span>&#128230;</span>
+    <span class="msg" id="backupMsg"></span>
+    <button class="link" id="mergeBackups">Merge now</button>
   </div>
   <div id="status">Loading...</div>
   <div id="list"></div>
@@ -260,6 +289,7 @@ export class SessionsViewProvider implements vscode.WebviewViewProvider {
   document.getElementById('refresh').addEventListener('click', () => vscode.postMessage({ command: 'refresh' }));
   document.getElementById('configureGitRepo').addEventListener('click', () => vscode.postMessage({ command: 'configureGitRepo' }));
   document.getElementById('useLocalOnly').addEventListener('click', () => vscode.postMessage({ command: 'useLocalOnly' }));
+  document.getElementById('mergeBackups').addEventListener('click', () => vscode.postMessage({ command: 'mergeBackups' }));
 
   function renderGitSyncState(mode, repoUrl) {
     const bar = document.getElementById('gitSyncBar');
@@ -269,6 +299,16 @@ export class SessionsViewProvider implements vscode.WebviewViewProvider {
     if (active) {
       repoEl.textContent = repoUrl;
       repoEl.title = repoUrl;
+    }
+  }
+
+  function renderBackupCandidates(count) {
+    const bar = document.getElementById('backupBar');
+    const msgEl = document.getElementById('backupMsg');
+    const active = count > 0;
+    bar.classList.toggle('active', active);
+    if (active) {
+      msgEl.textContent = count + ' leftover import backup folder(s) can be merged back into their project.';
     }
   }
 
@@ -424,6 +464,8 @@ export class SessionsViewProvider implements vscode.WebviewViewProvider {
       renderPreview(msg.title, msg.turns);
     } else if (msg.command === 'gitSyncState') {
       renderGitSyncState(msg.mode, msg.repoUrl);
+    } else if (msg.command === 'backupCandidates') {
+      renderBackupCandidates(msg.count);
     } else if (msg.command === 'error') {
       statusEl.textContent = 'Error: ' + msg.message;
     }

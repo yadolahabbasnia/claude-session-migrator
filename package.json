@@ -82,6 +82,11 @@
         "command": "claudeMigrator.useLocalSessionsOnly",
         "title": "Claude Migrator: Use Local Sessions Only",
         "category": "Claude Migrator"
+      },
+      {
+        "command": "claudeMigrator.mergeSessionBackups",
+        "title": "Claude Migrator: Merge Session Backups",
+        "category": "Claude Migrator"
       }
     ],
     "menus": {

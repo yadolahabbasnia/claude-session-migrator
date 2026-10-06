@@ -68,6 +68,7 @@ All commands are under the **Claude Migrator** category in the Command Palette:
 | `Claude Migrator: Sync Sessions via Git` | Pushes or pulls session history through a dedicated git repository instead of manually moving `.cmt` files. |
 | `Claude Migrator: Change Git Sync Repository` | Switches the configured sync repo and/or local checkout to a different one, re-validated before saving. |
 | `Claude Migrator: Use Local Sessions Only` | Stops treating the git repo as the reference; keeps the sync settings in place and deletes nothing. |
+| `Claude Migrator: Merge Session Backups` | Folds sessions from leftover `.backup-<timestamp>` import-safety folders back into their live project, then optionally trashes the backup. |
 
 The **Claude Migrator** sidebar (Activity Bar icon) is a live view over your session projects --
 it lists them, lets you export a single project or launch the full export/import wizards, preview
@@ -75,7 +76,8 @@ a session's conversation, reveal a project's folder in your OS file browser, del
 no longer want, mirrors whatever export/import operation is currently in progress, and has a
 **"Sync via Git..."** button for the git workflow below. Once a sync repo is configured, a thin bar
 appears under the toolbar showing which repo is the current reference, with "Change repo" and "Use
-local only" links next to it.
+local only" links next to it. A second bar appears whenever leftover import-backup folders are
+found, with a "Merge now" link (see "Merging leftover import backups" below).
 
 ## Claude Code sessions workflow
 
@@ -144,6 +146,30 @@ Settings: `claudeMigrator.gitSync.repoUrl`, `claudeMigrator.gitSync.localPath`,
 `claudeMigrator.gitSync.branch` (default `main`), `claudeMigrator.gitSync.archiveFileName`
 (default `claude-sessions.cmt`), `claudeMigrator.gitSync.mode` (`local` or `git`), and
 `claudeMigrator.gitSync.autoSync` (default `true`).
+
+### Merging leftover import backups
+
+Importing sessions into a project that already has some (with the default "backup and replace"
+strategy) first copies the existing content directory aside to
+`<project-folder>.backup-<timestamp>` before overwriting it -- see `migrationEngine.createBackup`.
+These backups sit right next to the live project under `~/.claude/projects/` and, left alone,
+clutter the sidebar as if they were separate projects. They're not: they're exact duplicates
+(pre-import snapshots) created by this extension's own import flow.
+
+The sidebar hides them from the main list and instead shows a banner ("N leftover import backup
+folder(s) can be merged back...") with a **"Merge now"** link; `Claude Migrator: Merge Session
+Backups` does the same from the command palette. For each backup/live pair you pick, it:
+
+1. Copies every `.jsonl` session (and `memory/` file) the backup has that the live project
+   *doesn't* already have, by file name -- session files are UUID-named, so this is effectively
+   "recover anything that would otherwise be lost," not an actual content merge.
+2. **Never overwrites anything already in the live project.** A name collision is left alone and
+   reported, not merged.
+3. Optionally moves the now-redundant backup folder to the system trash afterward (your choice,
+   per run).
+
+A backup folder whose original project folder no longer exists (orphaned) is left out of this
+flow entirely and stays visible as an ordinary project, since there's nothing to merge it into.
 
 ### Deleting sessions
 

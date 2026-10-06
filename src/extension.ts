@@ -9,6 +9,7 @@ import { registerImportSessionsCommand } from './commands/importSessions';
 import { registerUndoImportCommand } from './commands/undoImport';
 import { registerDeleteSessionsCommand } from './commands/deleteSessions';
 import { registerSyncSessionsViaGitCommand } from './commands/syncSessionsViaGit';
+import { registerMergeSessionBackupsCommand } from './commands/mergeSessionBackups';
 import { SessionsViewProvider } from './ui/sessionsViewProvider';
 import { SessionsAutoSyncWatcher } from './utils/sessionsWatcher';
 import { logger } from './utils/logging';
@@ -39,6 +40,7 @@ export function activate(context: vscode.ExtensionContext): void {
   registerUndoImportCommand(context);
   registerDeleteSessionsCommand(context);
   registerSyncSessionsViaGitCommand(context);
+  registerMergeSessionBackupsCommand(context);
 
   const sessionsViewProvider = new SessionsViewProvider(context.extensionUri);
   context.subscriptions.push(
