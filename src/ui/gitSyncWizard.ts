@@ -9,8 +9,22 @@ import {
   getGitSyncRepoUrl,
   setGitSyncSetting,
 } from '../utils/config';
-import { commitAndPush, ensureRepoAtPath, isGitInstalled, pull, GitSyncError } from '../utils/gitSync';
+import * as fsp from 'node:fs/promises';
+import {
+  commitAndPush,
+  discardFileChanges,
+  ensureRepoAtPath,
+  getCommittedFileSize,
+  isGitInstalled,
+  isSuspiciousShrink,
+  listSyncArchives,
+  machineArchiveFileName,
+  pull,
+  GitSyncError,
+} from '../utils/gitSync';
 import { pathExists } from '../utils/filesystem';
+import { formatBytes } from './exportWizardShared';
+import { syncRuntime } from '../utils/syncRuntime';
 import { getMachineInfo } from '../utils/platform';
 import { detectClaudeProfiles, getSessionsRootDir } from '../utils/claudeHome';
 import { runSessionExportWizard } from './sessionExportWizard';
@@ -125,14 +139,30 @@ export async function runGitSyncWizard(): Promise<void> {
       return;
     }
 
-    const archivePath = path.join(settings.localPath, settings.archiveFileName);
+    const machine = getMachineInfo();
+    const ownFileName = machineArchiveFileName(settings.archiveFileName, machine.hostname);
 
     if (choice === pushLabel) {
+      const archivePath = path.join(settings.localPath, ownFileName);
+      const previousSize = await getCommittedFileSize(settings.localPath, ownFileName);
       const exported = await runSessionExportWizard(undefined, archivePath, sessionsRoot);
       if (!exported) {
         return;
       }
-      const machine = getMachineInfo();
+      const newSize = (await fsp.stat(archivePath)).size;
+      if (isSuspiciousShrink(previousSize, newSize)) {
+        const pushAnyway = 'Push Anyway';
+        const answer = await vscode.window.showWarningMessage(
+          `The new archive is only ${formatBytes(newSize)}, down from ${formatBytes(previousSize ?? 0)} ` +
+            'already in the repository. That usually means sessions were left out of the export.',
+          { modal: true },
+          pushAnyway,
+        );
+        if (answer !== pushAnyway) {
+          await discardFileChanges(settings.localPath, ownFileName);
+          return;
+        }
+      }
       const pushed = await withCancellableProgress('Pushing sessions to git repository...', async () => {
         return commitAndPush(
           settings.localPath,
@@ -140,22 +170,51 @@ export async function runGitSyncWizard(): Promise<void> {
           `Update Claude sessions from ${machine.hostname} (${new Date().toISOString()})`,
         );
       });
+      syncRuntime.update({
+        lastManual: {
+          at: new Date().toISOString(),
+          kind: 'push',
+          ok: true,
+          message: pushed ? `${formatBytes(newSize)} pushed` : 'Nothing changed',
+        },
+      });
       vscode.window.showInformationMessage(
         pushed
-          ? `Claude Migrator: sessions pushed to ${settings.repoUrl}.`
+          ? `Claude Migrator: pushed ${formatBytes(newSize)} (${ownFileName}) to ${settings.repoUrl}.`
           : 'Claude Migrator: nothing changed -- the repository already had these sessions.',
       );
       return;
     }
 
-    if (!(await pathExists(archivePath))) {
+    const archives = (await listSyncArchives(settings.localPath)).filter((a) => a.fileName !== ownFileName);
+    if (archives.length === 0) {
       vscode.window.showInformationMessage(
-        `Claude Migrator: no session archive (${settings.archiveFileName}) was found in ${settings.repoUrl} yet -- ` +
+        `Claude Migrator: no session archive from another machine was found in ${settings.repoUrl} yet -- ` +
           'push from another machine first.',
       );
       return;
     }
-    await runSessionImportWizard(vscode.Uri.file(archivePath), sessionsRoot);
+    let archive = archives[0];
+    if (archives.length > 1) {
+      const picked = await vscode.window.showQuickPick(
+        archives.map((a) => ({
+          label: `$(archive) ${a.fileName}`,
+          description: `${formatBytes(a.sizeBytes)}${a.committedAt ? ` -- pushed ${new Date(a.committedAt).toLocaleString()}` : ''}`,
+          archive: a,
+        })),
+        { title: 'Which machine\'s sessions do you want to import?', ignoreFocusOut: true },
+      );
+      if (!picked) {
+        return;
+      }
+      archive = picked.archive;
+    }
+    const imported = await runSessionImportWizard(vscode.Uri.file(archive.absolutePath), sessionsRoot);
+    if (imported) {
+      syncRuntime.update({
+        lastManual: { at: new Date().toISOString(), kind: 'pull', ok: true, message: `Imported ${archive.fileName}` },
+      });
+    }
   } catch (err) {
     if (err instanceof OperationCancelledError) {
       return;

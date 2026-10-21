@@ -43,12 +43,12 @@ function entryLabel(entry: ManifestSessionEntry): string {
 export async function runSessionImportWizard(
   preselectedFile?: vscode.Uri,
   sessionsRootOverride?: string,
-): Promise<void> {
+): Promise<boolean> {
   const tempDirs: string[] = [];
   try {
     const archiveFile = preselectedFile?.fsPath ?? (await pickArchiveFile());
     if (!archiveFile) {
-      return;
+      return false;
     }
 
     const validation = await withCancellableProgress('Validating archive...', async (reporter) => {
@@ -61,7 +61,7 @@ export async function runSessionImportWizard(
         `Claude Migrator: archive validation failed.\n${validation.errors.join('\n')}`,
         { modal: true },
       );
-      return;
+      return false;
     }
     if (validation.warnings.length > 0) {
       vscode.window.showWarningMessage(`Claude Migrator: ${validation.warnings.join(' ')}`);
@@ -70,12 +70,12 @@ export async function runSessionImportWizard(
     const archive = validation.archive;
     if (archive.manifest.sessionProjects.length === 0) {
       vscode.window.showInformationMessage('This archive contains no Claude Code sessions.');
-      return;
+      return false;
     }
 
     const selectedEntries = await selectSessionsToImport(archive.manifest.sessionProjects);
     if (!selectedEntries || selectedEntries.length === 0) {
-      return;
+      return false;
     }
 
     const candidates = await gatherDestinationCandidates();
@@ -108,7 +108,7 @@ export async function runSessionImportWizard(
           'Cancel Import',
         );
         if (skip !== 'Continue') {
-          return;
+          return false;
         }
         continue;
       }
@@ -117,7 +117,7 @@ export async function runSessionImportWizard(
 
     if (mappings.size === 0) {
       vscode.window.showInformationMessage('No sessions were mapped to a destination; import cancelled.');
-      return;
+      return false;
     }
 
     const previews: Array<{
@@ -172,7 +172,7 @@ export async function runSessionImportWizard(
     });
 
     if (previews.length === 0) {
-      return;
+      return false;
     }
 
     const groupItems: PreviewGroupItem[] = previews.map((p) => ({
@@ -182,7 +182,7 @@ export async function runSessionImportWizard(
     }));
     const strategies = await confirmPreviewAndChooseStrategies(groupItems, 'session data');
     if (!strategies) {
-      return;
+      return false;
     }
 
     const logEntries: ImportLogEntry[] = [];
@@ -240,12 +240,14 @@ export async function runSessionImportWizard(
 
     await appendImportLogEntries(logEntries);
     await showFinalReport(results);
+    return true;
   } catch (err) {
     if (err instanceof OperationCancelledError) {
-      return;
+      return false;
     }
     logger.error('Session import failed', { error: String(err) });
     vscode.window.showErrorMessage(`Claude Migrator: session import failed -- ${(err as Error).message}`);
+    return false;
   } finally {
     for (const dir of tempDirs) {
       const err = await cleanupTempDir(dir);

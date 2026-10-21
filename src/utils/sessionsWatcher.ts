@@ -11,10 +11,20 @@ import {
   getGitSyncMode,
   getGitSyncRepoUrl,
 } from './config';
-import { commitAndPush, ensureRepoAtPath, isGitInstalled, pull } from './gitSync';
+import {
+  commitAndPush,
+  discardFileChanges,
+  ensureRepoAtPath,
+  getCommittedFileSize,
+  isGitInstalled,
+  isSuspiciousShrink,
+  machineArchiveFileName,
+  pull,
+} from './gitSync';
 import { runHeadlessSessionsExport } from '../archive/autoExport';
 import { getMachineInfo } from './platform';
 import { logger } from './logging';
+import { syncRuntime } from './syncRuntime';
 
 const DEBOUNCE_MS = 15_000;
 
@@ -65,8 +75,10 @@ export class SessionsAutoSyncWatcher implements vscode.Disposable {
   private restart(): void {
     this.closeAllWatchers();
     if (this.disposed || getGitSyncMode() !== 'git' || !getGitSyncAutoSyncEnabled()) {
+      syncRuntime.update({ watcher: 'off', nextSyncAt: undefined });
       return;
     }
+    syncRuntime.update({ watcher: 'idle', nextSyncAt: undefined });
     const sessionsRoot = getSessionsRootDir(getClaudeHomeDir());
     this.watchRecursive(sessionsRoot).catch((err) => {
       logger.warn('Could not start Claude Code sessions auto-sync watcher', { error: String(err) });
@@ -113,6 +125,7 @@ export class SessionsAutoSyncWatcher implements vscode.Disposable {
       clearTimeout(this.debounceTimer);
     }
     this.debounceTimer = setTimeout(() => void this.runSync(), DEBOUNCE_MS);
+    syncRuntime.update({ watcher: 'pending', nextSyncAt: new Date(Date.now() + DEBOUNCE_MS).toISOString() });
   }
 
   private async runSync(): Promise<void> {
@@ -133,33 +146,49 @@ export class SessionsAutoSyncWatcher implements vscode.Disposable {
     }
 
     this.syncing = true;
+    syncRuntime.update({ watcher: 'syncing', nextSyncAt: undefined });
+    let outcome: { ok: boolean; pushed: boolean; message?: string } | undefined;
     try {
       if (!(await isGitInstalled())) {
+        outcome = { ok: false, pushed: false, message: 'git was not found on PATH' };
         return;
       }
       const branch = getGitSyncBranch();
       await ensureRepoAtPath(localPath, repoUrl, branch);
       await pull(localPath, branch);
 
+      const machine = getMachineInfo();
       const sessionsRoot = getSessionsRootDir(getClaudeHomeDir());
-      const archivePath = path.join(localPath, getGitSyncArchiveFileName());
+      const archiveFileName = machineArchiveFileName(getGitSyncArchiveFileName(), machine.hostname);
+      const archivePath = path.join(localPath, archiveFileName);
+      const previousSize = await getCommittedFileSize(localPath, archiveFileName);
       const result = await runHeadlessSessionsExport(sessionsRoot, archivePath);
       if (!result) {
+        outcome = { ok: true, pushed: false, message: 'No sessions to sync yet' };
+        return;
+      }
+      if (isSuspiciousShrink(previousSize, result.archiveSizeBytes)) {
+        logger.warn('Auto-sync skipped: new archive is less than half the size of the last pushed one', {
+          previousSize,
+          newSize: result.archiveSizeBytes,
+        });
+        await discardFileChanges(localPath, archiveFileName);
+        outcome = { ok: false, pushed: false, message: 'Skipped: the new archive was less than half the size of the last push' };
         return;
       }
 
-      const machine = getMachineInfo();
       const pushed = await commitAndPush(
         localPath,
         branch,
         `Auto-sync Claude sessions from ${machine.hostname} (${new Date().toISOString()})`,
       );
+      outcome = { ok: true, pushed };
       if (pushed) {
         logger.info('Auto-synced Claude Code sessions to git', {
           repoUrl,
           projects: result.projectCount,
           files: result.fileCount,
-          skippedSecretFiles: result.skippedSecretFiles,
+          redactedSecretFiles: result.redactedSecretFiles,
         });
       }
     } catch (err) {
@@ -167,11 +196,17 @@ export class SessionsAutoSyncWatcher implements vscode.Disposable {
       // needs a manual merge) just gets retried on the next change instead of interrupting the
       // user with an error dialog for something that happened in the background.
       logger.warn('Sessions auto-sync failed; will retry on the next change', { error: String(err) });
+      outcome = { ok: false, pushed: false, message: (err as Error).message };
     } finally {
       this.syncing = false;
+      syncRuntime.update({
+        watcher: 'idle',
+        ...(outcome ? { lastAuto: { at: new Date().toISOString(), ...outcome } } : {}),
+      });
       if (this.pendingResync) {
         this.pendingResync = false;
         this.debounceTimer = setTimeout(() => void this.runSync(), DEBOUNCE_MS);
+        syncRuntime.update({ watcher: 'pending', nextSyncAt: new Date(Date.now() + DEBOUNCE_MS).toISOString() });
       }
     }
   }

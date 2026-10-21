@@ -5,6 +5,7 @@ import * as fs from 'node:fs/promises';
 import { walkFiles, looksBinary } from '../utils/filesystem';
 import { scanTextForSecrets, redactSecrets, type SecretFinding } from '../security/secretScanner';
 import { toPortableRelativePath } from '../utils/paths';
+import { OperationCancelledError } from '../utils/errors';
 
 /** Anything the security-review step can scan: a project's `.claude` dir, or a Claude Code
  * session project's folder under `<claudeHome>/projects/`. */
@@ -55,8 +56,8 @@ export async function runSecurityReview(targets: SecurityScanTarget[]): Promise<
     for (const [relative, findings] of fileFindings) {
       const choice = await vscode.window.showQuickPick(
         [
+          { label: '$(replace) Replace secrets with placeholders (recommended)', action: 'placeholder' as const },
           { label: '$(circle-slash) Exclude this file from the export', action: 'exclude' as const },
-          { label: '$(replace) Replace secrets with placeholders', action: 'placeholder' as const },
           { label: '$(check) Include anyway', action: 'include' as const },
         ],
         {
@@ -65,7 +66,12 @@ export async function runSecurityReview(targets: SecurityScanTarget[]): Promise<
           ignoreFocusOut: true,
         },
       );
-      if (!choice || choice.action === 'exclude') {
+      if (!choice) {
+        // Dismissing the prompt used to count as "exclude", which silently dropped whole
+        // sessions from the export. Treat it as cancelling the export instead.
+        throw new OperationCancelledError();
+      }
+      if (choice.action === 'exclude') {
         excluded.add(relative);
       } else if (choice.action === 'placeholder') {
         const absolutePath = path.join(target.rootPath, ...relative.split('/'));

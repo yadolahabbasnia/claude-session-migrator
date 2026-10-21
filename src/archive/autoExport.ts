@@ -1,6 +1,6 @@
 import * as fs from 'node:fs/promises';
 import { walkFiles, looksBinary } from '../utils/filesystem';
-import { scanTextForSecrets } from '../security/secretScanner';
+import { redactSecrets, scanTextForSecrets } from '../security/secretScanner';
 import { toPortableRelativePath } from '../utils/paths';
 import { scanSessionProjects } from '../discovery/sessionScanner';
 import { createArchive, type ArchiveSessionInput } from './archiveWriter';
@@ -10,15 +10,18 @@ export interface HeadlessExportResult {
   projectCount: number;
   fileCount: number;
   archiveSizeBytes: number;
-  skippedSecretFiles: number;
+  /** Files that contained secret-like text and were archived with those spans redacted. */
+  redactedSecretFiles: number;
 }
 
 /**
  * Exports every Claude Code session project under `sessionsRoot` to `destinationFile` with no
  * user interaction -- for the background auto-sync watcher, which can't pop a quickpick per
- * detected secret the way the interactive export wizard does. Any file that trips the secret
- * scanner is silently excluded (never included, never prompted) rather than guessing what the
- * user would have picked; `skippedSecretFiles` reports how many so the caller can surface it.
+ * detected secret the way the interactive export wizard does. A file that trips the secret
+ * scanner is still archived, with only the matched secret spans replaced by `[REDACTED:<rule>]`
+ * placeholders. It is never dropped: session transcripts routinely contain token-like strings,
+ * and excluding whole files silently shrank the archive to almost nothing (and then overwrote
+ * the good one in the repo).
  */
 export async function runHeadlessSessionsExport(
   sessionsRoot: string,
@@ -30,12 +33,12 @@ export async function runHeadlessSessionsExport(
   }
 
   const inputs: ArchiveSessionInput[] = [];
-  let skippedSecretFiles = 0;
+  let redactedSecretFiles = 0;
 
   for (const project of projects) {
-    const excluded = await findSecretFlaggedFiles(project);
-    skippedSecretFiles += excluded.size;
-    inputs.push({ project, excludedRelativePaths: excluded.size > 0 ? excluded : undefined });
+    const placeholders = await redactSecretFlaggedFiles(project);
+    redactedSecretFiles += placeholders.size;
+    inputs.push({ project, placeholderContent: placeholders.size > 0 ? placeholders : undefined });
   }
 
   const result = await createArchive({
@@ -50,21 +53,22 @@ export async function runHeadlessSessionsExport(
     projectCount: projects.length,
     fileCount: result.fileCount,
     archiveSizeBytes: result.archiveSizeBytes,
-    skippedSecretFiles,
+    redactedSecretFiles,
   };
 }
 
-async function findSecretFlaggedFiles(project: DiscoveredSessionProject): Promise<Set<string>> {
-  const flagged = new Set<string>();
+async function redactSecretFlaggedFiles(project: DiscoveredSessionProject): Promise<Map<string, string>> {
+  const redacted = new Map<string, string>();
   for await (const file of walkFiles(project.folderPath)) {
     const buffer = await fs.readFile(file.absolutePath);
     if (looksBinary(buffer)) {
       continue;
     }
     const relative = toPortableRelativePath(file.relativePath);
-    if (scanTextForSecrets(relative, buffer.toString('utf8')).length > 0) {
-      flagged.add(relative);
+    const text = buffer.toString('utf8');
+    if (scanTextForSecrets(relative, text).length > 0) {
+      redacted.set(relative, redactSecrets(relative, text).content);
     }
   }
-  return flagged;
+  return redacted;
 }

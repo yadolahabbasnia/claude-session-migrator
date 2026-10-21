@@ -98,17 +98,22 @@ export async function ensureRepoAtPath(localPath: string, remoteUrl: string, bra
 
 export async function pull(localPath: string, branch: string): Promise<void> {
   await runGit(['fetch', 'origin'], localPath);
-  const hasBranch = await runGit(['branch', '--list', branch], localPath);
-  if (!hasBranch.trim()) {
-    await runGit(['checkout', '-b', branch, `origin/${branch}`], localPath).catch(() =>
-      runGit(['checkout', '-B', branch], localPath),
+  const remoteHasBranch = (await runGit(['branch', '-r', '--list', `origin/${branch}`], localPath)).trim() !== '';
+  const hasLocalBranch = (await runGit(['branch', '--list', branch], localPath)).trim() !== '';
+  if (!hasLocalBranch) {
+    await runGit(
+      remoteHasBranch ? ['checkout', '-b', branch, `origin/${branch}`] : ['checkout', '-B', branch],
+      localPath,
     );
   } else {
     await runGit(['checkout', branch], localPath);
   }
-  await runGit(['pull', '--ff-only', 'origin', branch], localPath).catch(() => {
-    // Remote branch may not exist yet on a brand-new sync repo.
-  });
+  if (!remoteHasBranch) {
+    return; // brand-new sync repo: nothing to pull yet
+  }
+  // A real failure here (diverged history, dirty tree) must surface -- swallowing it left a
+  // machine silently stuck on an old commit, so "pull" kept importing stale sessions.
+  await runGit(['pull', '--rebase', '--autostash', 'origin', branch], localPath);
 }
 
 /** Stages every change, commits (if there is anything to commit), and pushes `branch`. */
@@ -119,6 +124,128 @@ export async function commitAndPush(localPath: string, branch: string, message: 
     return false;
   }
   await runGit(['commit', '-m', message], localPath);
-  await runGit(['push', '-u', 'origin', branch], localPath);
+  try {
+    await runGit(['push', '-u', 'origin', branch], localPath);
+  } catch {
+    // Another machine pushed in the meantime: replay our commit on top of theirs and retry once.
+    await runGit(['pull', '--rebase', 'origin', branch], localPath);
+    await runGit(['push', '-u', 'origin', branch], localPath);
+  }
   return true;
+}
+
+/** Size in bytes of `relativeFile` as of HEAD, or undefined if it isn't committed yet. */
+export async function getCommittedFileSize(localPath: string, relativeFile: string): Promise<number | undefined> {
+  try {
+    const out = await runGit(['cat-file', '-s', `HEAD:${relativeFile}`], localPath);
+    const size = Number.parseInt(out.trim(), 10);
+    return Number.isNaN(size) ? undefined : size;
+  } catch {
+    return undefined;
+  }
+}
+
+export interface SyncArchiveInfo {
+  fileName: string;
+  absolutePath: string;
+  sizeBytes: number;
+  /** Last commit date touching this file (ISO), when known. */
+  committedAt?: string;
+}
+
+/** Every `.cmt` archive at the root of the sync checkout, newest commit first. */
+export async function listSyncArchives(localPath: string): Promise<SyncArchiveInfo[]> {
+  const entries = await fs.readdir(localPath, { withFileTypes: true });
+  const infos: SyncArchiveInfo[] = [];
+  for (const entry of entries) {
+    if (!entry.isFile() || !entry.name.endsWith('.cmt')) {
+      continue;
+    }
+    const absolutePath = path.join(localPath, entry.name);
+    const stat = await fs.stat(absolutePath);
+    let committedAt: string | undefined;
+    try {
+      committedAt = (await runGit(['log', '-1', '--format=%cI', '--', entry.name], localPath)).trim() || undefined;
+    } catch {
+      committedAt = undefined;
+    }
+    infos.push({ fileName: entry.name, absolutePath, sizeBytes: stat.size, committedAt });
+  }
+  return infos.sort((a, b) => (b.committedAt ?? '').localeCompare(a.committedAt ?? ''));
+}
+
+/** `claude-sessions.cmt` + host `my-pc` -> `claude-sessions-my-pc.cmt`, so each machine writes
+ * its own archive and never overwrites what another machine pushed. */
+export function machineArchiveFileName(baseFileName: string, hostname: string): string {
+  const safeHost = hostname.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'machine';
+  const base = baseFileName.replace(/\.cmt$/i, '');
+  return `${base}-${safeHost}.cmt`;
+}
+
+/** True when a new archive is less than half the size of the previously committed one -- far more
+ * likely a broken/partial export than real data loss, so callers should not push it unasked. */
+export function isSuspiciousShrink(previousBytes: number | undefined, nextBytes: number): boolean {
+  return previousBytes !== undefined && previousBytes > 1024 * 1024 && nextBytes < previousBytes / 2;
+}
+
+/** Restores `relativeFile` to its committed state (or deletes it if it was never committed). */
+export async function discardFileChanges(localPath: string, relativeFile: string): Promise<void> {
+  try {
+    await runGit(['checkout', '--', relativeFile], localPath);
+  } catch {
+    await fs.rm(path.join(localPath, relativeFile), { force: true });
+  }
+}
+
+export interface RepoStatus {
+  lastCommit?: { hash: string; iso: string; subject: string };
+  /** Tracked or untracked changes in the checkout that haven't been committed yet. */
+  uncommittedFiles: number;
+  /** Local commits not pushed / remote commits not pulled, as of the last fetch (no network). */
+  ahead?: number;
+  behind?: number;
+  /** When this checkout last talked to the remote (mtime of `.git/FETCH_HEAD`). */
+  lastFetchedAt?: string;
+}
+
+/** Cheap, network-free snapshot of the sync checkout for the sidebar. Returns undefined when
+ * `localPath` isn't a git checkout. Every query is best-effort: a failure just leaves a field out. */
+export async function getRepoStatus(localPath: string, branch: string): Promise<RepoStatus | undefined> {
+  if (!(await isDirectory(path.join(localPath, '.git')))) {
+    return undefined;
+  }
+  const status: RepoStatus = { uncommittedFiles: 0 };
+  try {
+    const [hash, iso, ...subject] = (await runGit(['log', '-1', '--format=%H%x1f%cI%x1f%s'], localPath))
+      .trim()
+      .split('\x1f');
+    if (hash && iso) {
+      status.lastCommit = { hash, iso, subject: subject.join('\x1f') };
+    }
+  } catch {
+    // no commits yet
+  }
+  try {
+    status.uncommittedFiles = (await runGit(['status', '--porcelain'], localPath)).split('\n').filter(Boolean).length;
+  } catch {
+    // leave 0
+  }
+  try {
+    const [ahead, behind] = (await runGit(['rev-list', '--left-right', '--count', `HEAD...origin/${branch}`], localPath))
+      .trim()
+      .split(/\s+/)
+      .map((n) => Number.parseInt(n, 10));
+    if (!Number.isNaN(ahead) && !Number.isNaN(behind)) {
+      status.ahead = ahead;
+      status.behind = behind;
+    }
+  } catch {
+    // no upstream yet
+  }
+  try {
+    status.lastFetchedAt = (await fs.stat(path.join(localPath, '.git', 'FETCH_HEAD'))).mtime.toISOString();
+  } catch {
+    // never fetched
+  }
+  return status;
 }

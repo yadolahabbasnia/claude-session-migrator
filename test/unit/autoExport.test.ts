@@ -53,33 +53,37 @@ describe('runHeadlessSessionsExport', () => {
 
     expect(result).toBeDefined();
     expect(result?.projectCount).toBe(1);
-    expect(result?.skippedSecretFiles).toBe(0);
+    expect(result?.redactedSecretFiles).toBe(0);
 
     const archive = openArchive(destinationFile);
     expect(archive.manifest.sessionProjects).toHaveLength(1);
     expect(archive.zip.getEntries().some((e) => e.entryName.endsWith('sess-1.jsonl'))).toBe(true);
   });
 
-  it('silently excludes a file that trips the secret scanner instead of including or prompting', async () => {
+  it('keeps a file that trips the secret scanner, with only the secret redacted', async () => {
     const projectDir = path.join(sessionsRoot, '-home-alice-dev-my-api');
     await fs.mkdir(projectDir, { recursive: true });
     await fs.writeFile(
       path.join(projectDir, 'sess-1.jsonl'),
-      userLine('/home/alice/dev/my-api', 'sess-1', 'help me fix this bug', '2026-01-01T00:00:00.000Z'),
-    );
-    // AWS-style secret key, well inside what the scanner flags.
-    await fs.writeFile(
-      path.join(projectDir, 'notes.txt'),
-      'aws_secret_access_key = wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY\n',
+      userLine('/home/alice/dev/my-api', 'sess-1', 'help me fix this bug', '2026-01-01T00:00:00.000Z') +
+        userLine(
+          '/home/alice/dev/my-api',
+          'sess-1',
+          'aws_secret_access_key = wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY',
+          '2026-01-01T00:00:01.000Z',
+        ),
     );
 
     const result = await runHeadlessSessionsExport(sessionsRoot, destinationFile);
 
-    expect(result?.skippedSecretFiles).toBeGreaterThan(0);
+    expect(result?.redactedSecretFiles).toBe(1);
     const archive = openArchive(destinationFile);
-    const entry = archive.manifest.sessionProjects[0];
-    expect(entry.excludedFiles).toContain('notes.txt');
-    expect(archive.zip.getEntries().some((e) => e.entryName.endsWith('notes.txt'))).toBe(false);
-    expect(archive.zip.getEntries().some((e) => e.entryName.endsWith('sess-1.jsonl'))).toBe(true);
+    expect(archive.manifest.sessionProjects[0].excludedFiles).toEqual([]);
+    const entry = archive.zip.getEntries().find((e) => e.entryName.endsWith('sess-1.jsonl'));
+    expect(entry).toBeDefined();
+    const text = entry!.getData().toString('utf8');
+    expect(text).toContain('help me fix this bug');
+    expect(text).toContain('[REDACTED:');
+    expect(text).not.toContain('wJalrXUtnFEMI');
   });
 });
