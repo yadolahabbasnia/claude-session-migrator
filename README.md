@@ -1,375 +1,322 @@
 # Claude Project Migrator
 
-> **Quick start:** Activity Bar → **Claude Migrator** icon → `Export Sessions...` on the old
-> machine, move the `.cmt` file over, then `Claude Migrator: Import Sessions` on the new one.
+Move your **Claude Code sessions** and **project config** between machines -- or keep them in sync
+automatically through a private git repository -- with machine-specific paths rewritten along the
+way, even across different operating systems, usernames, home directories and project locations.
 
-A VS Code extension that moves two different kinds of Claude data from one machine to another,
-rewriting machine-specific paths along the way -- even when the OS, username, home directory,
-drive letter, or project path is different:
+<table>
+  <tr>
+    <td><img src="docs/screenshots/overview.png" alt="Sidebar overview with the sync card, stats and project cards" width="260"></td>
+    <td><img src="docs/screenshots/details.png" alt="Sync card with details expanded" width="260"></td>
+    <td><img src="docs/screenshots/attention.png" alt="Sync card showing an auto-sync error and unpushed commits" width="260"></td>
+  </tr>
+  <tr>
+    <td align="center">Overview</td>
+    <td align="center">Sync details</td>
+    <td align="center">Problems surfaced on the card</td>
+  </tr>
+</table>
+
+> Screenshots use sample data.
+
+## Contents
+
+- [What it moves](#what-it-moves)
+- [Install](#install)
+- [Quick start](#quick-start)
+- [The sidebar](#the-sidebar)
+- [Sync sessions through git](#sync-sessions-through-git)
+- [Commands](#commands)
+- [Working with sessions](#working-with-sessions)
+- [Project config (`.claude`)](#project-config-claude)
+- [How it works](#how-it-works)
+- [Security](#security)
+- [Settings](#settings)
+- [Limitations](#limitations)
+- [Development](#development)
+
+## What it moves
 
 1. **Claude Code sessions** -- the conversation history Claude Code keeps per project under
-   `~/.claude/projects/<encoded-path>/*.jsonl` (plus each project's `memory/` folder). This is
-   almost certainly what you mean by "my Claude projects": the sessions the Claude Code VS Code
-   extension has open or has ever had open for each of your projects.
+   `~/.claude/projects/<encoded-path>/*.jsonl`, plus each project's `memory/` folder.
 2. **Project config** -- a project's own `.claude/` directory (commands, agents, settings) that
-   lives inside the project's repository.
+   lives inside its repository.
 
-Both are exported into the same portable archive format (`.cmt`) and imported with the same
-safety machinery: checksum-verified extraction, automatic destination matching, a dry-run preview,
-mandatory backups before touching anything that already exists, and a post-import health check.
+Both travel in the same portable archive format (`.cmt`) and go through the same safety machinery:
+checksum-verified extraction, automatic destination matching, a dry-run preview, a mandatory backup
+before anything existing is touched, and a post-import health check.
 
-## What it does
+You can move archives by hand, or let the extension [sync sessions through a git
+repository](#sync-sessions-through-git) for you.
 
-- **Sessions**: scans `~/.claude/projects/` (or `$CLAUDE_CONFIG_DIR/projects/` if set) for every
-  project Claude Code has session history for, using the `cwd` recorded *inside* each session as
-  the source of truth for that project's real path (the directory name Claude Code stores sessions
-  under is an opaque, one-way hash-like encoding -- see below -- so it's never decoded, only
-  reproduced). A sidebar panel (Activity Bar → Claude Migrator) lists every session project, shows
-  live status while an export/import runs, and lets you preview a session's conversation before
-  deciding what to do with it.
-- **Project config**: scans your workspace (or any folder you point it at) for projects containing
-  a `.claude` directory.
-- Packages selected items into a single portable archive (`.cmt` -- "Claude Migration Transfer"),
-  with a versioned manifest, per-file SHA-256 checksums, and a lightweight secret scan before
-  anything leaves your machine.
-- On another machine, opens that archive, verifies its integrity, automatically matches each
-  archived project to a destination folder (via the open workspace, git remote, or folder name),
-  and rewrites any machine-specific paths found inside to match the new location -- for sessions,
-  that means every `.jsonl` line's `cwd` and any other absolute paths a tool call recorded; for
-  project config, everything under `.claude`.
-- Never silently overwrites existing data -- it always backs it up first and asks you to choose
-  how to proceed.
+## Install
 
-## Installation
-
-This is not (yet) published to the VS Code Marketplace. Build and install it locally:
+This extension is not on the VS Code Marketplace. Install the `.vsix` from the latest
+[GitHub release](https://github.com/yadolahabbasnia/claude-session-migrator/releases), or build it:
 
 ```bash
 npm install
 npm run package        # produces claude-project-migrator-<version>.vsix
-code --install-extension claude-project-migrator-0.1.0.vsix
+code --install-extension claude-project-migrator-<version>.vsix
 ```
+
+Then reload VS Code. Requirements: VS Code 1.85+, and `git` on your `PATH` if you want git sync.
+
+## Quick start
+
+**Move sessions by hand**
+
+1. Open the **Claude Migrator** icon in the Activity Bar.
+2. On the old machine: **Export** -> pick projects -> review -> save a `.cmt` file.
+3. Copy the file over. On the new machine: **Import** -> pick the file -> confirm the preview.
+
+**Keep machines in sync through git**
+
+1. Create an empty private repository (GitHub, GitLab, anything git can push to).
+2. In the sidebar, click **Set up Git sync** and enter the repository URL and a local folder.
+3. Done. From now on sessions are pushed automatically a few seconds after they change. On another
+   machine, set up the same repository and use **Sync now -> Pull** to import.
+
+## The sidebar
+
+A live view over your Claude Code sessions, from the Activity Bar.
+
+**Sync card** -- always on top:
+
+- Current mode (*Git sync* or *Local only*) and whether auto-sync is on, watching, waiting to settle
+  (with a countdown), syncing right now, or has failed.
+- When the last push happened, whether it was automatic or manual, and from which machine.
+- Problems shown directly on the card, not only in a log: a failed auto-sync run, commits not
+  pushed yet, updates waiting from other machines, uncommitted files.
+- **Details** expands: repository, branch, checkout path, last automatic/manual run, remote status
+  (ahead/behind and when it was last checked), every machine's archive with size and push time,
+  your machine name, the Claude profile in use, and how many profiles were found.
+- Buttons: **Sync now**, **Change repo**, **Pause/Resume auto-sync**, **Local only**.
+
+**Below the card**
+
+- Totals: projects, sessions, size, last activity.
+- **Export** / **Import** for sessions.
+- A banner when leftover import backups can be [merged back](#merging-leftover-import-backups).
+- **More tools** (collapsible) -- every other command: remove imported items, delete sessions,
+  inspect an archive, export/import/scan/validate project config.
+- A filterable list of project cards (session count, size, last activity, memory and git-remote
+  chips). Expand one to export it, reveal it, delete it, or open and delete individual sessions.
+  Clicking a session shows a condensed preview of its conversation.
+
+<table>
+  <tr>
+    <td><img src="docs/screenshots/tools.png" alt="More tools section expanded" width="260"></td>
+    <td><img src="docs/screenshots/local.png" alt="Sidebar before git sync is set up" width="260"></td>
+  </tr>
+  <tr>
+    <td align="center">More tools</td>
+    <td align="center">Before git sync is set up</td>
+  </tr>
+</table>
+
+Everything in the sidebar is also available from the Command Palette. Only *Export This Project*
+lives solely in the Explorer's right-click menu, because it needs a folder as context.
+
+## Sync sessions through git
+
+Sync sessions between machines through a git repository you dedicate to this purpose, instead of
+copying `.cmt` files around.
+
+### How it works
+
+- **One archive per machine.** Each machine pushes `claude-sessions-<hostname>.cmt`, so machines
+  never overwrite each other's sessions. **Pull** lists the archives from *other* machines (newest
+  first) and imports the one you pick. A legacy single `claude-sessions.cmt` shows up there too.
+- **Push** runs the normal export wizard (project selection, security review), writes the archive
+  into the repository checkout, commits and pushes. If the push is rejected because another machine
+  pushed first, it rebases and retries once.
+- **Pull** fetches the latest commit and runs the normal import wizard against the archive you
+  chose. A pull that fails (diverged history, dirty checkout) reports the git error instead of
+  silently leaving you on an old commit.
+- **Auto-sync.** While mode is *Git sync* and auto-sync is on, the extension watches
+  `<claudeHome>/projects/` and about 15 seconds after changes settle, exports and pushes. It only
+  ever writes into the sync checkout, never into `~/.claude/projects/`, and never prompts. Failures
+  are logged, shown on the sync card, and retried on the next change.
+
+### Safeguards
+
+- **Right repository only.** Before every push or pull the extension checks that the local folder's
+  git remote matches the configured repository URL, and refuses to continue otherwise. A folder you
+  pick that isn't a checkout is treated as a *parent* and a subfolder is created inside it.
+- **Secrets never drop sessions.** Auto-sync keeps every session file and only replaces text that
+  looks like a secret with `[REDACTED:<rule>]`. In the manual push wizard, "Replace secrets with
+  placeholders" is the first choice, and dismissing the prompt cancels the export instead of
+  silently excluding the file.
+- **Shrink guard.** If a new archive is less than half the size of the one already in the repo,
+  manual push asks you to confirm and auto-sync skips the push and says why.
+- **Sizes.** Sizes shown before export are uncompressed; the `.cmt` is a compressed zip and is
+  smaller (for example 175 MB of sessions becomes roughly 70 MB).
+
+### Switching and multiple accounts
+
+- **Change repo / go local.** *Change Git Sync Repository* points at a different repo or folder at
+  any time (re-validated first). *Use Local Sessions Only* switches back to `local` mode without
+  deleting anything and keeping your repo settings, so you can resume later.
+- **Multiple Claude accounts.** If more than one Claude Code config directory exists on the machine
+  (the active `CLAUDE_CONFIG_DIR` or `~/.claude`, plus siblings such as `~/.claude-work`), the
+  wizard asks which profile to sync instead of guessing.
+
+Requires `git`, and for a private repository whatever credential helper or SSH key you normally
+use for that remote.
 
 ## Commands
 
-All commands are under the **Claude Migrator** category in the Command Palette:
+All commands are under the **Claude Migrator** category in the Command Palette.
 
 | Command | What it does |
 | --- | --- |
-| `Claude Migrator: Export Sessions` | Exports Claude Code session history (from `~/.claude/projects/`). |
-| `Claude Migrator: Import Sessions` | Imports session history from a `.cmt` archive into `~/.claude/projects/`. |
-| `Claude Migrator: Export Projects` | Runs the project-config export wizard (scan → select → options → security review → review → save `.cmt`). |
-| `Claude Migrator: Import Backup` | Runs the project-config import wizard (select `.cmt` → validate → select projects → match destinations → preview → import). |
-| `Claude Migrator: Scan for Claude Projects` | Scans the workspace or a chosen folder for `.claude` project-config directories. |
-| `Claude Migrator: Inspect Backup` | Shows a `.cmt` archive's manifest contents (both projects and sessions) without importing anything. |
-| `Claude Migrator: Validate Current Project` | Checks the current workspace folder's `.claude` for structural issues and obvious secrets. |
-| `Claude Migrator: Export This Project` | Right-click a folder in the Explorer to export just that project's `.claude` config. |
-| `Claude Migrator: Delete Sessions` | Deletes session history: pick a project, then either specific sessions or the whole project. |
-| `Claude Migrator: Sync Sessions via Git` | Pushes or pulls session history through a dedicated git repository instead of manually moving `.cmt` files. |
-| `Claude Migrator: Change Git Sync Repository` | Switches the configured sync repo and/or local checkout to a different one, re-validated before saving. |
-| `Claude Migrator: Use Local Sessions Only` | Stops treating the git repo as the reference; keeps the sync settings in place and deletes nothing. |
-| `Claude Migrator: Merge Session Backups` | Folds sessions from leftover `.backup-<timestamp>` import-safety folders back into their live project, then optionally trashes the backup. |
+| Export Sessions | Exports Claude Code session history from `~/.claude/projects/` to a `.cmt`. |
+| Import Sessions | Imports session history from a `.cmt` into `~/.claude/projects/`. |
+| Sync Sessions via Git | Push or pull sessions through the configured git repository. |
+| Change Git Sync Repository | Switch the sync repository and/or local checkout. |
+| Use Local Sessions Only | Stop treating the git repo as the reference; deletes nothing. |
+| Merge Session Backups | Fold leftover `.backup-<timestamp>` folders back into their project. |
+| Delete Sessions | Delete one session, several, or a whole project (to the system trash). |
+| Remove Imported Items | Undo an earlier import and restore its backup. |
+| Inspect Backup | Show what a `.cmt` contains without importing it. |
+| Export Projects | Export `.claude` project config (scan, select, security review, save). |
+| Import Backup | Import project config from a `.cmt`. |
+| Scan for Claude Projects | Find `.claude` directories in the workspace or a chosen folder. |
+| Validate Current Project | Check the workspace's `.claude` for structural problems and secrets. |
+| Export This Project | Explorer right-click: export one folder's `.claude`. |
 
-The **Claude Migrator** sidebar (Activity Bar icon) is a live view over your session projects --
-it lists them, lets you export a single project or launch the full export/import wizards, preview
-a session's conversation, reveal a project's folder in your OS file browser, delete sessions you
-no longer want, mirrors whatever export/import operation is currently in progress, and has a
-**"Sync via Git..."** button for the git workflow below. Once a sync repo is configured, a thin bar
-appears under the toolbar showing which repo is the current reference, with "Change repo" and "Use
-local only" links next to it. A second bar appears whenever leftover import-backup folders are
-found, with a "Merge now" link (see "Merging leftover import backups" below).
+## Working with sessions
 
-## Claude Code sessions workflow
+### Export and import
 
-**Export**: `Claude Migrator: Export Sessions` (or the sidebar's "Export Sessions..." button)
-scans `~/.claude/projects/`, lets you multi-select which session projects to include, runs the
-same security scan and review steps as project-config export (see below), and writes a `.cmt`
-(default name `claude-sessions-<date>.cmt`).
+**Export** scans `~/.claude/projects/`, lets you multi-select projects, runs the security scan and
+review, and writes a `.cmt`.
 
-**Import**: `Claude Migrator: Import Sessions` opens a `.cmt`, verifies it, lets you pick which
-session projects to bring in, auto-matches each one to a destination project folder the same way
-project-config import does, and shows a preview before writing anything. The destination directory
-under `~/.claude/projects/` is computed by re-running Claude Code's own path-encoding algorithm
-against your chosen destination folder -- so imported sessions land exactly where Claude Code
-itself will look for them, with no extra registration step. Every `.jsonl` line is treated as an
-independent JSON document during migration: a line whose path-replacement would corrupt its JSON
-is reverted on its own, without discarding the rest of that session's successfully migrated lines.
+**Import** opens a `.cmt`, verifies it, lets you pick projects, matches each to a destination
+folder (git remote, then same folder name, then the single open workspace), shows a dry-run preview,
+and only then writes. The destination folder name is computed by running Claude Code's own
+path-encoding algorithm against the destination, so imported sessions land exactly where Claude
+Code will look for them -- no registration step. Every `.jsonl` line is treated as its own JSON
+document: a line whose path rewrite would corrupt it is reverted alone, without discarding the rest
+of the session.
 
-### Syncing sessions via git
+### Re-importing (incremental updates)
 
-As an alternative to manually copying `.cmt` files between machines, `Claude Migrator: Sync
-Sessions via Git` (also available as the sidebar's **"Sync via Git..."** button) pushes and pulls
-session history through a git repository you dedicate to this purpose:
-
-1. The first time you run it, it asks for a repository URL and a local folder to check it out
-   into (both saved to settings so you're only asked once). If multiple Claude Code
-   accounts/profiles are detected on this machine (see below), it asks which one you mean.
-2. It clones (or validates) that local checkout, pulls the latest commit, then asks: **Push** or
-   **Pull**.
-   - **Push** runs the same export wizard as above (project selection, security review), writes
-     the archive into the repository's working copy, commits, and pushes.
-   - **Pull** fetches the latest commit and runs the same import wizard as above against the
-     archive it finds there.
-
-Before every push or pull, the tool re-reads `<localPath>/.git/config` and refuses to proceed
-unless its remote actually matches the configured repository URL -- so a stale or mistyped local
-path can never silently sync sessions into, or read them out of, the wrong repository
-(`WrongRepositoryError`). This requires `git` to be installed and on `PATH`, and (for a private
-repo) whatever credential helper or SSH key you'd normally use for that remote.
-
-**Changing the repository or switching back to local-only:** the first successful setup flips
-`claudeMigrator.gitSync.mode` to `git`, which the sidebar reflects with a small status bar naming
-the current repo. `Claude Migrator: Change Git Sync Repository` lets you point at a different
-repo/local path at any time (re-validated the same way before it's saved); `Claude Migrator: Use
-Local Sessions Only` flips the mode back to `local` without touching your saved repo settings or
-deleting anything under `~/.claude/projects/` -- running the sync command again later picks up
-right where you left off.
-
-**Multiple Claude Code accounts on one machine:** if more than one Claude Code config dir is found
-(the active `CLAUDE_CONFIG_DIR`/`~/.claude` plus siblings like `~/.claude-work`, each with their
-own `projects/` subfolder), the sync wizard detects this and asks which profile's sessions you
-want to push or pull, rather than silently guessing.
-
-**Auto-sync:** once `gitSync.mode` is `git`, the extension watches `<claudeHome>/projects/` for
-changes (new or updated sessions) and, ~15 seconds after things go quiet, automatically commits
-and pushes to the configured repository -- no need to run "Sync Sessions via Git" by hand every
-time. This only ever writes into the dedicated sync-repo checkout, never into
-`~/.claude/projects/` itself, and it never prompts: any file that trips the secret scanner is
-silently excluded from the auto-push (logged to the Claude Migrator output channel) rather than
-included or asked about, since nobody's watching to answer. If a push can't go through cleanly
-(e.g. it needs a manual merge), auto-sync logs a warning and quietly retries on the next change
-instead of interrupting you with an error dialog. Set `claudeMigrator.gitSync.autoSync` to `false`
-to stay in `git` mode (sidebar/import still point at the repo) but push only when you explicitly
-run the sync command.
-
-Settings: `claudeMigrator.gitSync.repoUrl`, `claudeMigrator.gitSync.localPath`,
-`claudeMigrator.gitSync.branch` (default `main`), `claudeMigrator.gitSync.archiveFileName`
-(default `claude-sessions.cmt`), `claudeMigrator.gitSync.mode` (`local` or `git`), and
-`claudeMigrator.gitSync.autoSync` (default `true`).
+If a session already exists at the destination, choose **Merge** instead of **Backup and
+replace**. For `.jsonl` files, merge matches entries by their `uuid` and writes the union:
+duplicates are not added, new incoming entries are appended, and local-only entries are kept.
+Re-importing the same archive twice is a no-op. A backup of the pre-merge file is still taken.
 
 ### Merging leftover import backups
 
-Importing sessions into a project that already has some (with the default "backup and replace"
-strategy) first copies the existing content directory aside to
-`<project-folder>.backup-<timestamp>` before overwriting it -- see `migrationEngine.createBackup`.
-These backups sit right next to the live project under `~/.claude/projects/` and, left alone,
-clutter the sidebar as if they were separate projects. They're not: they're exact duplicates
-(pre-import snapshots) created by this extension's own import flow.
+Importing with *Backup and replace* first copies the existing project folder to
+`<project-folder>.backup-<timestamp>` next to it. Left alone these would look like duplicate
+projects, so the sidebar hides them and shows a banner instead. **Merge Session Backups**:
 
-The sidebar hides them from the main list and instead shows a banner ("N leftover import backup
-folder(s) can be merged back...") with a **"Merge now"** link; `Claude Migrator: Merge Session
-Backups` does the same from the command palette. For each backup/live pair you pick, it:
+1. copies every `.jsonl` session and `memory/` file the backup has that the live project doesn't,
+   by file name;
+2. **never overwrites** anything already in the live project -- a name collision is left alone and
+   reported;
+3. optionally moves the now-redundant backup folder to the system trash.
 
-1. Copies every `.jsonl` session (and `memory/` file) the backup has that the live project
-   *doesn't* already have, by file name -- session files are UUID-named, so this is effectively
-   "recover anything that would otherwise be lost," not an actual content merge.
-2. **Never overwrites anything already in the live project.** A name collision is left alone and
-   reported, not merged.
-3. Optionally moves the now-redundant backup folder to the system trash afterward (your choice,
-   per run).
-
-A backup folder whose original project folder no longer exists (orphaned) is left out of this
-flow entirely and stays visible as an ordinary project, since there's nothing to merge it into.
+A backup whose original project no longer exists is left as an ordinary project.
 
 ### Deleting sessions
 
-Session history is yours and nothing else reads it, so the tool lets you delete it -- from the
-sidebar or via `Claude Migrator: Delete Sessions`. Three granularities:
+From the sidebar or **Delete Sessions**: one session (trash icon), several (tick and *Delete
+Selected*), or a whole project. Every delete shows what goes away and moves items to the **system
+trash** (falling back to permanent delete only where trashing isn't supported, and saying so).
+Deleting a *project* also removes its `memory/` folder; deleting *sessions* never touches it.
+Targets are re-derived and validated against the sessions root before anything is removed, and the
+sidebar re-scans first so a stale list can't delete the wrong thing.
 
-- **One session** -- the trash icon on any session row.
-- **Several sessions** -- tick the checkbox on each row, then "Delete Selected (n)".
-- **A whole project** -- "Delete Project" in the project's action row, which removes the entire
-  `~/.claude/projects/<folder>/` directory.
+## Project config (`.claude`)
 
-Every delete shows a modal listing exactly what goes away, and items are moved to the **system
-trash** rather than unlinked, so a mistake is recoverable from your OS. Where trashing isn't
-supported (some remote/container setups) the tool falls back to a permanent delete and says so in
-the result message.
+**Export** -- find projects (workspace scan, a chosen folder, or an explicitly requested list of
+common developer directories -- never your whole disk), multi-select, choose options (path
+migration, security scan and compression are on by default; including the hostname is an opt-in),
+review the security findings per file (exclude, redact, or include), review the summary, save.
 
-Two behaviors worth knowing:
+**Import** -- pick a `.cmt`; it is validated (manifest, format version, every SHA-256 checksum)
+before extraction; each project is matched to a destination (git remote, same name, or the only
+open workspace -- otherwise you are asked, it never guesses); a dry-run preview shows new, modified
+and preserved files and path references to rewrite; if `.claude` already exists you choose **Backup
+and replace**, **Merge**, **Skip** or **Cancel**; a timestamped `.claude.backup-<timestamp>` is
+always made first; after confirmation it is applied, then a health check runs and a report is shown.
 
-- A project folder can also hold a `memory/` directory. Deleting the *project* deletes that too;
-  the sidebar marks such projects `has memory/` and the confirmation repeats the warning.
-  Deleting *sessions* never touches `memory/`.
-- Deleting a project's last session leaves an empty folder behind, which the scanner would hide
-  but which would still sit on disk -- so an empty folder is pruned afterwards. A folder that
-  still contains anything (a `memory/` directory, say) is left alone.
+## How it works
 
-Deletion targets are re-derived from the sessions root and re-validated before anything is
-removed: a project must be a direct child of `~/.claude/projects/`, and a session must be a bare
-`*.jsonl` name inside one. Paths coming from the webview are never trusted as-is, and the
-sidebar re-scans disk before each delete so a stale list can't delete the wrong thing.
+**Session folder names can't be decoded.** Claude Code names a project's session folder by taking
+its absolute path and replacing every character that isn't `[a-zA-Z0-9]` with `-` (longer than 200
+characters it truncates and appends a hash). That is lossy and one-way. So this tool never decodes
+it. It reads the `cwd` Claude Code records inside each session's `.jsonl` (from the most recently
+modified session) as the source path, and computes the destination folder name by running the same
+encoding forward. A project with no recorded `cwd` shows an unknown source: it still exports and
+imports, but its paths can't be migrated.
 
-### Why the session folder name can't just be decoded
+**Path migration.** Every absolute path in a text file is classified against three roots, most
+specific first: `$PROJECT_ROOT`, `$WORKSPACE_ROOT`, `$HOME`. A path under one of them is rewritten
+to the destination's equivalent in its native separator style. A path that matches none is left
+untouched and reported; the extension never guesses. JSON (and each `.jsonl` line) is only rewritten
+if the result still parses. Binary files are copied byte for byte. Paths are parsed with
+`path.win32`/`path.posix` explicitly, so a Windows-authored file migrates correctly on Linux.
 
-Claude Code names each project's session folder by taking the project's absolute path and
-replacing *every* character that isn't `[a-zA-Z0-9]` with `-` (paths longer than 200 characters
-get truncated with a hash suffix appended). That means the encoding is intentionally lossy and
-one-way -- a literal `-` already in a folder name and a former path separator look identical, so a
-folder name alone can't be decoded back into a path with any confidence. This tool never tries:
-instead it reads the `cwd` field Claude Code itself records inside each session's `.jsonl` content
-(specifically, the most recently modified session's `cwd`) as the authoritative source path, and
-re-derives the destination folder name by running the *same* encoding algorithm forward against
-wherever you're importing to.
+**Project identity.** A stable id derived from the git remote (so `git@github.com:org/repo.git` and
+`https://github.com/org/repo.git` match across machines), falling back to the project name plus a
+hash of its path.
 
-If a session project has no recorded `cwd` at all (rare -- e.g. a session that failed before its
-first real turn), its source path is shown as unknown and none of its path references can be
-automatically migrated; the files still export and import correctly, just unmodified.
-
-### Re-importing a session (incremental updates)
-
-If a session `.jsonl` already exists at the destination -- most commonly because you already
-imported this same archive before, or the same session has kept growing on both machines -- pick
-**Merge** at the "already has session data" prompt instead of **Backup and replace**. For `.jsonl`
-files specifically, Merge doesn't overwrite the file: it reads both the local file and the
-incoming one, matches entries by their `uuid` field, and writes the union back out --
-
-- an entry already present locally (by `uuid`) is left as-is and not duplicated, so re-importing
-  the exact same archive twice is a no-op;
-- an entry that's only in the incoming file (new messages exported since you last imported) gets
-  appended;
-- an entry that's only in your local copy (messages added locally since your last export) is kept,
-  not dropped.
-
-When every entry in the merged result has a `timestamp` (the normal case), the file is written
-back out in chronological order. A backup of the pre-merge file is still taken first, same as
-every other destructive change this tool makes.
-
-## Project config export workflow
-
-1. **Find projects** -- the current workspace is scanned automatically; you can also scan a
-   specific folder, or (only when you explicitly ask) one of a short list of common developer
-   directories for your OS (`~/Projects`, `~/Developer`, etc. -- the extension never scans your
-   whole filesystem on its own).
-2. **Select projects** -- multi-select which discovered projects to include, with select-all /
-   deselect-all and text filtering built into the picker.
-3. **Export options** -- portable path migration, the security scan, and compression are on by
-   default; including the machine hostname in the manifest is an explicit, off-by-default
-   "Advanced" toggle (it's diagnostic-only and never required for migration to work).
-4. **Security check** -- every text file under each selected project's `.claude` is scanned for
-   patterns that look like API keys, tokens, or private keys. For each flagged file you choose to
-   exclude it, replace the detected secrets with `[REDACTED:<rule>]` placeholders, or include it
-   anyway. The full secret value is never written to a log.
-5. **Review** -- a summary of selected projects, total files/size, detected machine-specific
-   references, and any outstanding security warnings, before anything is written to disk.
-6. **Export** -- pick a destination `.cmt` file (default name `claude-migration-<date>.cmt`) and
-   the archive is written with a progress indicator you can cancel at any time.
-
-## Project config import workflow
-
-1. Pick a `.cmt` file.
-2. The archive is validated: readable, manifest present and at a supported format version, and
-   every archived file's SHA-256 checksum verified -- before any extraction happens.
-3. Select which of the archived projects to import.
-4. Each project is automatically matched to a destination using, in order: a matching git remote,
-   an existing folder with the same name (a folder that already has a `.claude` scores higher
-   confidence), or the single open workspace folder when it's the only candidate. Whenever none of
-   these apply with confidence, you're asked to pick a destination folder yourself -- it never
-   guesses.
-5. A dry-run preview is built for every mapped project: new / modified / preserved file counts,
-   how many path references will be rewritten, and any references that couldn't be automatically
-   resolved (these are always left untouched and reported, never silently guessed at).
-6. If a project's destination already has a `.claude` directory, you choose **Backup and
-   replace**, **Merge** (existing files not present in the archive are kept; JSON files are
-   merged key-by-key, one level deep), **Skip**, or **Cancel**. A timestamped backup
-   (`.claude.backup-<timestamp>`) is always created first whenever an existing `.claude` will be
-   touched.
-7. After your explicit confirmation of the full preview, the migration is applied with progress
-   and cancellation support.
-8. A post-import health check runs per project (`.claude` exists, file counts, JSON validity, no
-   leftover literal references to the source machine's path) and a final report is shown with
-   ✓ / ⚠ / ✗ per check.
-
-## Supported OS
-
-Windows, macOS, and Linux -- as both the export and import side, in any combination, for both
-project config and sessions. Path parsing uses Node's `path.win32` / `path.posix` explicitly
-rather than assuming the current OS, so e.g. a Windows-authored `.claude` file or session
-transcript can be correctly parsed and migrated while running the extension on Linux.
-
-## Archive format (`.cmt`)
-
-A `.cmt` file is a ZIP container (openable with any ZIP tool) with a defined internal layout:
+**Archive format (`.cmt`).** A ZIP file:
 
 ```
-manifest.json                # versioned; format version, tool version, source machine info,
-                              # a `projects` list (config) and a `sessionProjects` list (sessions)
-checksums.json                # archive-path -> SHA-256 hex digest for every archived file
-projects/<id>/claude/...      # each selected project's .claude contents, unmodified
-sessions/<id>/data/...        # each selected session project's *.jsonl + memory/, unmodified
+manifest.json                # format + tool version, source machine info,
+                             # a `projects` list (config) and a `sessionProjects` list (sessions)
+checksums.json               # archive path -> SHA-256 for every archived file
+projects/<id>/claude/...     # each project's .claude contents, unmodified
+sessions/<id>/data/...       # each session project's *.jsonl + memory/, unmodified
 ```
 
-An archive can hold either kind, both, or (in the common case) just one -- the Export
-Sessions/Export Projects wizards each populate only their own list, leaving the other empty.
-Archives written before session support existed simply have no `sessionProjects` key; this tool
-treats that the same as an empty list.
+The manifest includes the platform and home directory (needed to rebuild `$HOME` context) but not
+the username, and the hostname is `"redacted"` unless you opt in. Archives from before session
+support have no `sessionProjects` key, which is treated as empty.
 
-`manifest.json` deliberately omits everything not required to migrate a project: it does not
-include the machine's username or full environment, and the hostname is redacted by default
-(`"hostname": "redacted"`) unless you opt in to including it under Advanced options. The platform
-and home directory *are* always included, because they're required to reconstruct the source
-machine's `$HOME` / `$PROJECT_ROOT` context during path migration.
+## Security
 
-Project identity: each project gets a stable id, preferring one derived from its git remote
-(normalized so `git@github.com:org/repo.git` and `https://github.com/org/repo.git` produce the
-same id) so the same project is recognized across machines regardless of its filesystem path;
-projects without a git remote fall back to an id derived from the project name plus a hash of its
-source path.
+- A lightweight regex scanner flags AWS keys, Anthropic/OpenAI keys, GitHub/Slack tokens, bearer
+  tokens, PEM private keys, and generic `key`/`token`/`secret`/`password` assignments. It catches
+  obvious accidents; it is not a guarantee. Review the findings yourself.
+- Findings are always shown redacted (e.g. `AKIA****MNOP`); the full value is never logged or shown.
+- Nothing is uploaded anywhere by the extension itself. Export writes a local `.cmt`; git sync
+  pushes only to the repository you configured -- use a **private** one, since session transcripts
+  can contain anything you discussed with Claude.
+- Checksums are verified before extraction, and a backup is taken before any destructive change.
 
-## Security model
+## Settings
 
-- A lightweight scanner (not an enterprise-grade secret detector) flags patterns that look like
-  AWS keys, Anthropic/OpenAI API keys, GitHub/Slack tokens, bearer tokens, PEM private key blocks,
-  and generic `key`/`token`/`secret`/`password` assignments. It's meant to catch obvious accidental
-  exports, not guarantee nothing sensitive ever leaves the machine -- review the security step's
-  findings yourself.
-- Detected secrets are always previewed redacted (e.g. `AKIA****MNOP`); the full value is never
-  written to the output log or shown in the UI.
-- Nothing is uploaded anywhere by this extension. Export writes a local `.cmt` file; you decide
-  how to transfer it.
-- Checksums are verified before any archive contents are extracted to disk on import, and before
-  any destructive change (backup-and-replace, merge) is applied to existing project config or
-  session data.
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| `claudeMigrator.gitSync.repoUrl` | `""` | Repository used to sync sessions. |
+| `claudeMigrator.gitSync.localPath` | `""` | Local checkout of that repository. |
+| `claudeMigrator.gitSync.branch` | `main` | Branch to pull from and push to. |
+| `claudeMigrator.gitSync.archiveFileName` | `claude-sessions.cmt` | Base name; the machine name is added to it. |
+| `claudeMigrator.gitSync.mode` | `local` | `local` or `git`. Switched to `git` the first time you set up sync. |
+| `claudeMigrator.gitSync.autoSync` | `true` | Push automatically in `git` mode. |
+| `claudeMigrator.scanDirectories` | `[]` | Extra directories offered when scanning for projects. |
+| `claudeMigrator.scanMaxDepth` | `6` | How deep to look when scanning. |
+| `claudeMigrator.debugLogging` | `false` | Verbose output in the "Claude Migrator" channel. |
 
-## Path migration behavior
+## Limitations
 
-Every absolute path found in a project's text files -- `.claude` config or session `.jsonl` alike
--- is classified against three roots, most specific first: the project root (`$PROJECT_ROOT`), the
-workspace root (`$WORKSPACE_ROOT`), and the home directory (`$HOME`). A path that resolves under
-one of these is rewritten to the destination's equivalent path in the destination's native
-separator style; a path that doesn't match any known root is left completely untouched and
-reported as an unresolved reference in the migration preview and the final report -- the extension
-never guesses at a replacement.
-
-JSON files (`.json`, and each line of a `.jsonl`) are only ever rewritten if the result still
-parses as valid JSON (backslashes in a Windows destination path are correctly JSON-escaped); if
-that check fails, the affected unit is left unmodified as a safety fallback rather than risking
-corrupted config or a corrupted session transcript.
-
-Binary files are copied byte-for-byte and are never scanned or modified.
-
-## Limitations (MVP scope)
-
-- Unresolved path references are reported but not manually re-mappable from within the import
-  wizard -- if the extension can't confidently classify a reference, you'll see it flagged in the
-  preview and the final report and can edit that file yourself afterward. A guided per-reference
-  "replace" UI is a natural next step but is out of scope for this MVP.
-- JSON merging for the **Merge** import strategy is a one-level-deep structural merge (incoming
-  keys win, nested objects merge one level further); it is not a full three-way/semantic merge.
-  `.jsonl` session transcripts merge differently (see "Re-importing a session" below): by entry
-  identity (`uuid`), not by key.
-- Full functionality (scanning, reading, and writing) requires the extension host's filesystem to
-  be the one you actually want to operate on. In VS Code Remote (SSH / WSL / Dev Containers), this
-  extension runs on the remote/container filesystem, not your local machine -- exporting *from* a
-  remote workspace archives files on that remote host, and you'd still need to move the resulting
-  `.cmt` file to wherever you plan to import it.
-- The secret scanner is intentionally simple (regex-based) and does not claim complete coverage.
-- Session projects with no `cwd` ever recorded in any of their `.jsonl` files (source path
-  "unknown") export and import correctly but can't have their path references migrated -- there's
-  nothing to migrate *from*.
-- The sidebar is read/preview/launch-only for sessions; project-selection for an export or import
-  still happens in the wizard's QuickPick (a single "Export this project" button per sidebar item
-  bypasses that step for one project at a time).
+- Unresolved path references are reported but can't be re-mapped from inside the import wizard; you
+  can edit those files afterwards.
+- The **Merge** strategy for JSON config is a one-level-deep structural merge (incoming keys win),
+  not a semantic three-way merge. `.jsonl` transcripts merge by entry `uuid` instead.
+- In VS Code Remote (SSH, WSL, Dev Containers) the extension works on the remote filesystem, so an
+  export taken there is a file on the remote host.
+- The secret scanner is intentionally simple.
+- Auto-sync status ("last run", watcher state) lives in memory and resets when VS Code restarts; the
+  last push time always comes from git itself.
+- The git sync's remote status (ahead/behind) reflects the last fetch and does not hit the network.
 
 ## Development
 
@@ -378,30 +325,18 @@ npm install
 npm run watch          # esbuild --watch
 ```
 
-Press `F5` in VS Code (with this folder open) to launch an Extension Development Host.
-
-## Testing
+Press `F5` with this folder open to launch an Extension Development Host.
 
 ```bash
 npm run typecheck
 npm run lint
-npm test               # vitest unit tests (123 tests covering path resolution across every
-                        # Windows/macOS/Linux source-destination combination, the session
-                        # path-encoding algorithm, session discovery via recorded cwd, archive
-                        # round-trips and checksum verification for both project config and
-                        # sessions, the migration engine's backup/merge/rollback behavior
-                        # (including per-line .jsonl handling), project discovery including
-                        # nested projects, ignored directories and symlink loops, and more)
+npm test               # vitest: path resolution across Windows/macOS/Linux combinations,
+                       # session path encoding and discovery, archive round-trips and checksums,
+                       # the migration engine's backup/merge/rollback, git sync (including two
+                       # machines against a real bare repository), the auto-sync watcher with
+                       # real files and git, and the sidebar markup
+npm run package        # production bundle + vsce package -> claude-project-migrator-<version>.vsix
 ```
 
-Unit tests run against plain Node.js and fixtures under `test/fixtures/` -- they don't require a
-VS Code host. UI-level flows (the wizards themselves) are exercised manually via `F5` since they
-depend on interactive VS Code APIs (QuickPick, OpenDialog, etc.).
-
-## Packaging
-
-```bash
-npm run package         # runs the production esbuild bundle, then vsce package --no-dependencies
-```
-
-Produces `claude-project-migrator-<version>.vsix` in the project root.
+Unit tests run on plain Node against fixtures in `test/fixtures/`; they do not need a VS Code host.
+The interactive wizards (QuickPick, OpenDialog) are exercised manually with `F5`.

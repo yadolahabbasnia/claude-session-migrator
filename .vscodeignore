@@ -10,3 +10,5 @@ vitest.config.ts
 .prettierrc.json
 **/*.map
 **/.gitignore
+docs/**
+CHANGELOG.md

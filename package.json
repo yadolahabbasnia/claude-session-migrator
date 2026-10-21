@@ -1,10 +1,18 @@
 {
   "name": "claude-project-migrator",
   "displayName": "Claude Project Migrator",
-  "description": "Export and import Claude project configuration (.claude) between machines, rewriting machine-specific paths automatically.",
-  "version": "0.1.0",
+  "description": "Move Claude Code sessions and project config between machines, or sync sessions automatically through a git repository, rewriting machine-specific paths.",
+  "version": "0.2.0",
   "publisher": "claude-project-migrator",
   "private": true,
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/yadolahabbasnia/claude-session-migrator.git"
+  },
+  "homepage": "https://github.com/yadolahabbasnia/claude-session-migrator#readme",
+  "bugs": {
+    "url": "https://github.com/yadolahabbasnia/claude-session-migrator/issues"
+  },
   "engines": {
     "vscode": "^1.85.0"
   },
